@@ -1,37 +1,39 @@
-import type { ReactNode } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { colors } from '@/design-system/colors';
 import { spacing } from '@/design-system/spacing';
 import { typography } from '@/design-system/typography';
 
-type ScreenProps = {
-  children: ReactNode;
+type EmptyStateProps = {
+  body: string;
   title: string;
 };
 
-export function Screen({ children, title }: ScreenProps) {
+export function EmptyState({ body, title }: EmptyStateProps) {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>{title}</Text>
-      <View style={styles.content}>{children}</View>
+      <Text style={styles.body}>{body}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
-    backgroundColor: colors.background,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderStyle: 'dashed',
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: spacing.sm,
     padding: spacing.lg,
   },
   title: {
-    ...typography.title,
+    ...typography.heading,
     color: colors.text,
   },
-  content: {
-    flex: 1,
-    marginTop: spacing.lg,
-    gap: spacing.md,
+  body: {
+    ...typography.body,
+    color: colors.textMuted,
+    lineHeight: 22,
   },
 });
