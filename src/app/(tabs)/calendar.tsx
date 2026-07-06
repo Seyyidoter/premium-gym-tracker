@@ -1,4 +1,4 @@
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -37,6 +37,7 @@ import {
 const weekdayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export default function CalendarScreen() {
+  const router = useRouter();
   const [visibleMonth, setVisibleMonth] = useState(() => new Date());
   const [selectedDateKey, setSelectedDateKey] = useState(() => todayDateKey());
   const [monthWorkouts, setMonthWorkouts] = useState<WorkoutSummary[]>([]);
@@ -214,7 +215,16 @@ export default function CalendarScreen() {
           />
         ) : (
           selectedWorkouts.map((workout) => (
-            <View key={workout.id} style={styles.workoutCard}>
+            <Pressable
+              key={workout.id}
+              onPress={() => {
+                router.push(`/workout/${workout.id}`);
+              }}
+              style={({ pressed }) => [
+                styles.workoutCard,
+                pressed ? styles.pressedDay : null,
+              ]}
+            >
               <View style={styles.cardHeader}>
                 <View style={styles.cardTitleColumn}>
                   <Text style={styles.workoutTitle}>
@@ -226,7 +236,8 @@ export default function CalendarScreen() {
                 </View>
                 <StatusPill status={workout.status} />
               </View>
-            </View>
+              <Text style={styles.openText}>Open workout</Text>
+            </Pressable>
           ))
         )}
       </ScrollView>
@@ -430,5 +441,9 @@ const styles = StyleSheet.create({
   errorText: {
     ...typography.caption,
     color: colors.danger,
+  },
+  openText: {
+    ...typography.caption,
+    color: colors.accent,
   },
 });

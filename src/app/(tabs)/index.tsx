@@ -1,6 +1,6 @@
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import PagerView from 'react-native-pager-view';
 
 import { EmptyState } from '@/components/EmptyState';
@@ -69,6 +69,7 @@ type DayWorkoutListProps = {
 };
 
 function DayWorkoutList({ dateKey }: DayWorkoutListProps) {
+  const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
   const [workouts, setWorkouts] = useState<WorkoutSummary[]>([]);
 
@@ -107,7 +108,16 @@ function DayWorkoutList({ dateKey }: DayWorkoutListProps) {
   return (
     <View style={styles.list}>
       {workouts.map((workout) => (
-        <View key={workout.id} style={styles.workoutCard}>
+        <Pressable
+          key={workout.id}
+          onPress={() => {
+            router.push(`/workout/${workout.id}`);
+          }}
+          style={({ pressed }) => [
+            styles.workoutCard,
+            pressed ? styles.pressedCard : null,
+          ]}
+        >
           <View style={styles.cardHeader}>
             <View style={styles.cardTitleColumn}>
               <Text style={styles.workoutTitle}>
@@ -122,7 +132,8 @@ function DayWorkoutList({ dateKey }: DayWorkoutListProps) {
           <Text style={styles.progressText}>
             {workout.completed_set_count} / {workout.set_count} sets completed
           </Text>
-        </View>
+          <Text style={styles.openText}>Open workout</Text>
+        </Pressable>
       ))}
     </View>
   );
@@ -175,6 +186,9 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     padding: spacing.md,
   },
+  pressedCard: {
+    opacity: 0.72,
+  },
   cardHeader: {
     alignItems: 'flex-start',
     flexDirection: 'row',
@@ -196,5 +210,9 @@ const styles = StyleSheet.create({
   progressText: {
     ...typography.caption,
     color: colors.textMuted,
+  },
+  openText: {
+    ...typography.caption,
+    color: colors.accent,
   },
 });
