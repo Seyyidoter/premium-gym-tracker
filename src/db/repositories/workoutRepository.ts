@@ -43,6 +43,44 @@ export type WorkoutSummary = Workout & {
   completed_set_count: number;
 };
 
+export type WorkoutHistoryStatusFilter = WorkoutStatus | 'all';
+
+export type WorkoutHistoryFilter = {
+  status?: WorkoutHistoryStatusFilter;
+};
+
+export type WorkoutHistoryItem = WorkoutSummary & {
+  total_strength_volume: number;
+  total_cardio_distance_km: number;
+  total_cardio_duration_seconds: number;
+};
+
+export type WorkoutHistorySummary = {
+  total_workouts: number;
+  completed_workouts: number;
+  workouts_this_week: number;
+  completed_sets: number;
+  total_strength_volume: number;
+  total_cardio_distance_km: number;
+  total_cardio_duration_seconds: number;
+  last_completed_workout_date: string | null;
+};
+
+export type ExerciseRecentHistoryItem = {
+  workout_id: string;
+  scheduled_date: string;
+  status: WorkoutStatus;
+  track_type: TrackType;
+  set_count: number;
+  completed_set_count: number;
+  best_weight: number | null;
+  best_reps: number | null;
+  total_strength_volume: number;
+  total_cardio_distance_km: number;
+  max_incline: number | null;
+  total_duration_seconds: number;
+};
+
 type RoutineExerciseTemplateRow = {
   id: string;
   exercise_id: string;
@@ -117,6 +155,35 @@ type WorkoutExerciseContextRow = {
   id: string;
   workout_id: string;
   exercise_id: string;
+};
+
+type WorkoutHistorySummaryRow = {
+  total_workouts: number | null;
+  completed_workouts: number | null;
+  workouts_this_week: number | null;
+  completed_sets: number | null;
+  total_strength_volume: number | null;
+  total_cardio_distance_km: number | null;
+  total_cardio_duration_seconds: number | null;
+  last_completed_workout_date: string | null;
+};
+
+type ExerciseRecentHistoryMetricRow = {
+  workout_id: string;
+  scheduled_date: string;
+  status: WorkoutStatus;
+  track_type: TrackType;
+  set_number: number;
+  is_completed: 0 | 1;
+  weight: number | null;
+  reps: number | null;
+  distance_km: number | null;
+  incline: number | null;
+  duration_seconds: number | null;
+};
+
+type ExerciseRecentHistoryAccumulator = ExerciseRecentHistoryItem & {
+  best_set_volume: number;
 };
 
 export type WorkoutSetMetricsPayload = {
@@ -1169,6 +1236,206 @@ ORDER BY w.scheduled_date ASC, w.created_at ASC;
   );
 }
 
+export async function listWorkoutHistory(
+  filter: WorkoutHistoryFilter = {},
+): Promise<WorkoutHistoryItem[]> {
+  const database = await getReadyDatabase();
+  const where = ['w.deleted_at IS NULL'];
+  const params: string[] = [];
+
+  if (filter.status && filter.status !== 'all') {
+    where.push('w.status = ?');
+    params.push(filter.status);
+  }
+
+  return database.getAllAsync<WorkoutHistoryItem>(
+    `
+SELECT
+  w.*,
+  r.name AS routine_name,
+  COUNT(DISTINCT we.id) AS exercise_count,
+  COUNT(s.id) AS set_count,
+  COALESCE(SUM(CASE WHEN s.is_completed = 1 THEN 1 ELSE 0 END), 0) AS completed_set_count,
+  COALESCE(
+    SUM(
+      CASE
+        WHEN e.track_type = 'weight_reps'
+          AND sm.weight IS NOT NULL
+          AND sm.reps IS NOT NULL
+        THEN sm.weight * sm.reps
+        ELSE 0
+      END
+    ),
+    0
+  ) AS total_strength_volume,
+  COALESCE(
+    SUM(
+      CASE
+        WHEN e.track_type = 'distance_duration_incline'
+        THEN COALESCE(sm.distance_km, 0)
+        ELSE 0
+      END
+    ),
+    0
+  ) AS total_cardio_distance_km,
+  COALESCE(
+    SUM(
+      CASE
+        WHEN e.track_type IN ('distance_duration_incline', 'duration_only')
+        THEN COALESCE(sm.duration_seconds, 0)
+        ELSE 0
+      END
+    ),
+    0
+  ) AS total_cardio_duration_seconds
+FROM workouts w
+LEFT JOIN routines r
+  ON r.id = w.routine_id
+  AND r.deleted_at IS NULL
+LEFT JOIN workout_exercises we
+  ON we.workout_id = w.id
+  AND we.deleted_at IS NULL
+LEFT JOIN exercises e
+  ON e.id = we.exercise_id
+  AND e.deleted_at IS NULL
+LEFT JOIN sets s
+  ON s.workout_exercise_id = we.id
+  AND s.deleted_at IS NULL
+LEFT JOIN set_metrics sm
+  ON sm.set_id = s.id
+  AND sm.deleted_at IS NULL
+WHERE ${where.join(' AND ')}
+GROUP BY w.id
+ORDER BY w.scheduled_date DESC, w.created_at DESC;
+`,
+    ...params,
+  );
+}
+
+export async function getWorkoutHistorySummary(): Promise<WorkoutHistorySummary> {
+  const database = await getReadyDatabase();
+  const weekRange = getCurrentWeekRange();
+  const row = await database.getFirstAsync<WorkoutHistorySummaryRow>(
+    `
+SELECT
+  COUNT(DISTINCT w.id) AS total_workouts,
+  COUNT(DISTINCT CASE WHEN w.status = 'completed' THEN w.id ELSE NULL END) AS completed_workouts,
+  COUNT(DISTINCT CASE WHEN w.scheduled_date BETWEEN ? AND ? THEN w.id ELSE NULL END) AS workouts_this_week,
+  COALESCE(SUM(CASE WHEN s.is_completed = 1 THEN 1 ELSE 0 END), 0) AS completed_sets,
+  COALESCE(
+    SUM(
+      CASE
+        WHEN e.track_type = 'weight_reps'
+          AND sm.weight IS NOT NULL
+          AND sm.reps IS NOT NULL
+        THEN sm.weight * sm.reps
+        ELSE 0
+      END
+    ),
+    0
+  ) AS total_strength_volume,
+  COALESCE(
+    SUM(
+      CASE
+        WHEN e.track_type = 'distance_duration_incline'
+        THEN COALESCE(sm.distance_km, 0)
+        ELSE 0
+      END
+    ),
+    0
+  ) AS total_cardio_distance_km,
+  COALESCE(
+    SUM(
+      CASE
+        WHEN e.track_type IN ('distance_duration_incline', 'duration_only')
+        THEN COALESCE(sm.duration_seconds, 0)
+        ELSE 0
+      END
+    ),
+    0
+  ) AS total_cardio_duration_seconds,
+  MAX(CASE WHEN w.status = 'completed' THEN w.scheduled_date ELSE NULL END) AS last_completed_workout_date
+FROM workouts w
+LEFT JOIN workout_exercises we
+  ON we.workout_id = w.id
+  AND we.deleted_at IS NULL
+LEFT JOIN exercises e
+  ON e.id = we.exercise_id
+  AND e.deleted_at IS NULL
+LEFT JOIN sets s
+  ON s.workout_exercise_id = we.id
+  AND s.deleted_at IS NULL
+LEFT JOIN set_metrics sm
+  ON sm.set_id = s.id
+  AND sm.deleted_at IS NULL
+WHERE w.deleted_at IS NULL;
+`,
+    weekRange.start,
+    weekRange.end,
+  );
+
+  return {
+    total_workouts: row?.total_workouts ?? 0,
+    completed_workouts: row?.completed_workouts ?? 0,
+    workouts_this_week: row?.workouts_this_week ?? 0,
+    completed_sets: row?.completed_sets ?? 0,
+    total_strength_volume: row?.total_strength_volume ?? 0,
+    total_cardio_distance_km: row?.total_cardio_distance_km ?? 0,
+    total_cardio_duration_seconds: row?.total_cardio_duration_seconds ?? 0,
+    last_completed_workout_date: row?.last_completed_workout_date ?? null,
+  };
+}
+
+export async function getExerciseRecentHistory(
+  exerciseId: string,
+  limit = 5,
+): Promise<ExerciseRecentHistoryItem[]> {
+  const database = await getReadyDatabase();
+  const rows = await database.getAllAsync<ExerciseRecentHistoryMetricRow>(
+    `
+SELECT
+  w.id AS workout_id,
+  w.scheduled_date,
+  w.status,
+  e.track_type,
+  s.set_number,
+  s.is_completed,
+  sm.weight,
+  sm.reps,
+  sm.distance_km,
+  sm.incline,
+  sm.duration_seconds
+FROM workouts w
+INNER JOIN workout_exercises we
+  ON we.workout_id = w.id
+  AND we.deleted_at IS NULL
+INNER JOIN exercises e
+  ON e.id = we.exercise_id
+  AND e.deleted_at IS NULL
+INNER JOIN sets s
+  ON s.workout_exercise_id = we.id
+  AND s.deleted_at IS NULL
+INNER JOIN set_metrics sm
+  ON sm.set_id = s.id
+  AND sm.deleted_at IS NULL
+WHERE w.deleted_at IS NULL
+  AND w.status IN ('completed', 'in_progress')
+  AND we.exercise_id = ?
+  AND (
+    sm.weight IS NOT NULL
+    OR sm.reps IS NOT NULL
+    OR sm.distance_km IS NOT NULL
+    OR sm.incline IS NOT NULL
+    OR sm.duration_seconds IS NOT NULL
+  )
+ORDER BY w.scheduled_date DESC, w.created_at DESC, we.order_index ASC, s.set_number ASC;
+`,
+    exerciseId,
+  );
+
+  return mapExerciseRecentHistoryRows(rows, limit);
+}
+
 export async function listWorkoutsByDate(
   scheduledDate: string,
 ): Promise<Workout[]> {
@@ -1491,6 +1758,105 @@ INSERT INTO set_metrics (
 
 function getDefaultSetCount(trackType: TrackType): number {
   return trackType === 'weight_reps' ? 3 : 1;
+}
+
+function mapExerciseRecentHistoryRows(
+  rows: ExerciseRecentHistoryMetricRow[],
+  limit: number,
+): ExerciseRecentHistoryItem[] {
+  const history: ExerciseRecentHistoryAccumulator[] = [];
+  const byWorkoutId = new Map<string, ExerciseRecentHistoryAccumulator>();
+
+  for (const row of rows) {
+    let item = byWorkoutId.get(row.workout_id);
+
+    if (!item) {
+      if (history.length >= limit) {
+        break;
+      }
+
+      item = {
+        workout_id: row.workout_id,
+        scheduled_date: row.scheduled_date,
+        status: row.status,
+        track_type: row.track_type,
+        set_count: 0,
+        completed_set_count: 0,
+        best_weight: null,
+        best_reps: null,
+        total_strength_volume: 0,
+        total_cardio_distance_km: 0,
+        max_incline: null,
+        total_duration_seconds: 0,
+        best_set_volume: 0,
+      };
+      byWorkoutId.set(row.workout_id, item);
+      history.push(item);
+    }
+
+    item.set_count += 1;
+
+    if (row.is_completed === 1) {
+      item.completed_set_count += 1;
+    }
+
+    if (row.weight !== null && row.reps !== null) {
+      const setVolume = row.weight * row.reps;
+      item.total_strength_volume += setVolume;
+
+      if (setVolume > item.best_set_volume) {
+        item.best_set_volume = setVolume;
+        item.best_weight = row.weight;
+        item.best_reps = row.reps;
+      }
+    }
+
+    if (row.distance_km !== null) {
+      item.total_cardio_distance_km += row.distance_km;
+    }
+
+    if (row.incline !== null) {
+      item.max_incline =
+        item.max_incline === null
+          ? row.incline
+          : Math.max(item.max_incline, row.incline);
+    }
+
+    if (row.duration_seconds !== null) {
+      item.total_duration_seconds += row.duration_seconds;
+    }
+  }
+
+  return history.map(({ best_set_volume: _bestSetVolume, ...item }) => item);
+}
+
+function getCurrentWeekRange(): { end: string; start: string } {
+  const today = new Date();
+  const start = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate(),
+  );
+  const day = start.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+
+  start.setDate(start.getDate() + mondayOffset);
+
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+
+  return {
+    end: formatDateKey(end),
+    start: formatDateKey(start),
+  };
+}
+
+function formatDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
 }
 
 function mapPreviousMetricsBySetNumber(

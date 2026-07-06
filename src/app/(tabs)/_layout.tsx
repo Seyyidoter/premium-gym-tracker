@@ -23,6 +23,10 @@ export default function TabsLayout() {
         options={{ headerShown: false, title: 'Calendar' }}
       />
       <Tabs.Screen
+        name="history"
+        options={{ headerShown: false, title: 'History' }}
+      />
+      <Tabs.Screen
         name="exercises"
         options={{ headerShown: false, title: 'Exercises' }}
       />

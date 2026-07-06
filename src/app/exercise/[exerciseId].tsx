@@ -16,6 +16,8 @@ import { colors } from '@/design-system/colors';
 import { spacing } from '@/design-system/spacing';
 import { typography } from '@/design-system/typography';
 import { getExerciseById } from '@/db/repositories/exerciseRepository';
+import type { ExerciseRecentHistoryItem } from '@/db/repositories/workoutRepository';
+import { getExerciseRecentHistory } from '@/db/repositories/workoutRepository';
 import type { Exercise, TrackType } from '@/db/types';
 
 const trackTypeLabels: Record<TrackType, string> = {
@@ -27,16 +29,29 @@ const trackTypeLabels: Record<TrackType, string> = {
 export default function ExerciseDetailScreen() {
   const { exerciseId } = useLocalSearchParams<{ exerciseId: string }>();
   const [exercise, setExercise] = useState<Exercise | null>(null);
+  const [recentHistory, setRecentHistory] = useState<ExerciseRecentHistoryItem[]>(
+    [],
+  );
   const [isLoading, setLoading] = useState(true);
 
   const loadExercise = useCallback(async () => {
     if (!exerciseId) {
+      setExercise(null);
+      setRecentHistory([]);
+      setLoading(false);
       return;
     }
 
     setLoading(true);
     try {
-      setExercise(await getExerciseById(exerciseId));
+      const nextExercise = await getExerciseById(exerciseId);
+      setExercise(nextExercise);
+
+      if (nextExercise) {
+        setRecentHistory(await getExerciseRecentHistory(exerciseId, 5));
+      } else {
+        setRecentHistory([]);
+      }
     } finally {
       setLoading(false);
     }
@@ -126,6 +141,8 @@ export default function ExerciseDetailScreen() {
           <InfoRow label="Asset" value={gifSource ? 'Local GIF ready' : 'Placeholder'} />
         </View>
 
+        <RecentHistoryBlock history={recentHistory} />
+
         <View style={styles.instructionsBlock}>
           <Text style={styles.sectionTitle}>Instructions</Text>
           <Text style={styles.instructionsText}>
@@ -134,6 +151,37 @@ export default function ExerciseDetailScreen() {
         </View>
       </ScrollView>
     </Screen>
+  );
+}
+
+type RecentHistoryBlockProps = {
+  history: ExerciseRecentHistoryItem[];
+};
+
+function RecentHistoryBlock({ history }: RecentHistoryBlockProps) {
+  return (
+    <View style={styles.recentHistoryBlock}>
+      <Text style={styles.sectionTitle}>Recent history</Text>
+      {history.length === 0 ? (
+        <Text style={styles.historyEmpty}>No history yet.</Text>
+      ) : (
+        <View style={styles.historyList}>
+          {history.map((item) => (
+            <View key={item.workout_id} style={styles.historyRow}>
+              <View style={styles.historyDateColumn}>
+                <Text style={styles.historyDate}>
+                  {formatHistoryDate(item.scheduled_date)}
+                </Text>
+                <Text style={styles.historyMeta}>
+                  {item.completed_set_count}/{item.set_count} sets
+                </Text>
+              </View>
+              <Text style={styles.historyValue}>{formatHistoryValue(item)}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -149,6 +197,67 @@ function InfoRow({ label, value }: InfoRowProps) {
       <Text style={styles.infoValue}>{value}</Text>
     </View>
   );
+}
+
+function formatHistoryValue(item: ExerciseRecentHistoryItem): string {
+  if (item.track_type === 'weight_reps') {
+    if (item.best_weight !== null && item.best_reps !== null) {
+      return `${formatNumber(item.best_weight)} x ${formatNumber(
+        item.best_reps,
+      )} best / ${formatNumber(item.total_strength_volume)} volume`;
+    }
+
+    return `${formatNumber(item.total_strength_volume)} volume`;
+  }
+
+  if (item.track_type === 'distance_duration_incline') {
+    const parts = [`${formatNumber(item.total_cardio_distance_km)} km`];
+
+    if (item.max_incline !== null) {
+      parts.push(`${formatNumber(item.max_incline)} incline`);
+    }
+
+    if (item.total_duration_seconds > 0) {
+      parts.push(formatDuration(item.total_duration_seconds));
+    }
+
+    return parts.join(' / ');
+  }
+
+  return formatDuration(item.total_duration_seconds);
+}
+
+function formatHistoryDate(dateKey: string): string {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+
+  return date.toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+  });
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds <= 0) {
+    return '0s';
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60);
+
+  if (minutes === 0) {
+    return `${remainingSeconds}s`;
+  }
+
+  if (remainingSeconds === 0) {
+    return `${minutes}m`;
+  }
+
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
+function formatNumber(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
 const styles = StyleSheet.create({
@@ -291,6 +400,50 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     gap: spacing.sm,
     padding: spacing.md,
+  },
+  recentHistoryBlock: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: spacing.md,
+    padding: spacing.md,
+  },
+  historyList: {
+    gap: spacing.sm,
+  },
+  historyRow: {
+    alignItems: 'flex-start',
+    backgroundColor: colors.background,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: spacing.md,
+    justifyContent: 'space-between',
+    padding: spacing.sm,
+  },
+  historyDateColumn: {
+    minWidth: 72,
+  },
+  historyDate: {
+    ...typography.caption,
+    color: colors.text,
+  },
+  historyValue: {
+    ...typography.caption,
+    color: colors.textMuted,
+    flex: 1,
+    textAlign: 'right',
+  },
+  historyMeta: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
+  historyEmpty: {
+    ...typography.body,
+    color: colors.textMuted,
   },
   sectionTitle: {
     ...typography.heading,
