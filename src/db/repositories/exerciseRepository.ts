@@ -59,6 +59,10 @@ ORDER BY name COLLATE NOCASE ASC;
   return rows.map(mapExerciseRow);
 }
 
+export async function getExercisesForPicker(): Promise<Exercise[]> {
+  return listExercises();
+}
+
 export async function getExerciseById(id: string): Promise<Exercise | null> {
   const database = await getReadyDatabase();
   const row = await database.getFirstAsync<ExerciseRow>(

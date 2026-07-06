@@ -1,8 +1,9 @@
 import { useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -27,15 +28,18 @@ import type {
   WorkoutSetMetricsPayload,
 } from '@/db/repositories/workoutRepository';
 import {
+  addExerciseToWorkout,
   addWorkoutSet,
   applyPreviousMetricsToWorkoutExercise,
   deleteWorkoutSet,
   getPreviousSetMetricsForWorkout,
   getWorkoutDetails,
+  softDeleteWorkoutExercise,
   toggleSetCompleted,
   updateSetMetrics,
 } from '@/db/repositories/workoutRepository';
-import type { TrackType } from '@/db/types';
+import { getExercisesForPicker } from '@/db/repositories/exerciseRepository';
+import type { Exercise, TrackType } from '@/db/types';
 import { formatReadableDate } from '@/features/calendar/dateUtils';
 
 type MetricDraft = {
@@ -54,9 +58,35 @@ export default function WorkoutScreen() {
   const [metricDrafts, setMetricDrafts] = useState<Record<string, MetricDraft>>(
     {},
   );
+  const [pickerExercises, setPickerExercises] = useState<Exercise[]>([]);
+  const [exerciseSearch, setExerciseSearch] = useState('');
+  const [isExercisePickerVisible, setExercisePickerVisible] = useState(false);
+  const [isLoadingExercises, setLoadingExercises] = useState(false);
   const [isLoading, setLoading] = useState(true);
   const [isMutating, setMutating] = useState(false);
   const mutationQueueRef = useRef(Promise.resolve());
+
+  const filteredPickerExercises = useMemo(() => {
+    const searchTerm = exerciseSearch.trim().toLocaleLowerCase();
+
+    if (!searchTerm) {
+      return pickerExercises;
+    }
+
+    return pickerExercises.filter((exercise) => {
+      const secondaryMuscles = exercise.secondary_muscles.join(' ');
+      const searchableText = [
+        exercise.name,
+        exercise.primary_muscle,
+        secondaryMuscles,
+        exercise.category,
+      ]
+        .join(' ')
+        .toLocaleLowerCase();
+
+      return searchableText.includes(searchTerm);
+    });
+  }, [exerciseSearch, pickerExercises]);
 
   const loadWorkout = useCallback(async (showLoading = true) => {
     if (!workoutId) {
@@ -181,6 +211,48 @@ export default function WorkoutScreen() {
     [loadWorkout, runQueuedMutation],
   );
 
+  const loadPickerExercises = useCallback(async () => {
+    setLoadingExercises(true);
+    try {
+      setPickerExercises(await getExercisesForPicker());
+    } finally {
+      setLoadingExercises(false);
+    }
+  }, []);
+
+  const openExercisePicker = useCallback(async () => {
+    setExerciseSearch('');
+    setExercisePickerVisible(true);
+    await loadPickerExercises();
+  }, [loadPickerExercises]);
+
+  const addExercise = useCallback(
+    async (exerciseId: string) => {
+      if (!details) {
+        return;
+      }
+
+      try {
+        await runQueuedMutation(async () => {
+          setMutating(true);
+          try {
+            await addExerciseToWorkout(details.id, exerciseId);
+            setExercisePickerVisible(false);
+            await loadWorkout(false);
+          } finally {
+            setMutating(false);
+          }
+        });
+      } catch (error: unknown) {
+        Alert.alert(
+          'Exercise not added',
+          error instanceof Error ? error.message : 'Try again.',
+        );
+      }
+    },
+    [details, loadWorkout, runQueuedMutation],
+  );
+
   const usePreviousValues = useCallback(
     async (workoutExerciseId: string) => {
       try {
@@ -210,6 +282,43 @@ export default function WorkoutScreen() {
           error instanceof Error ? error.message : 'Try again.',
         );
       }
+    },
+    [loadWorkout, runQueuedMutation],
+  );
+
+  const confirmRemoveExercise = useCallback(
+    (workoutExercise: WorkoutExerciseDetails) => {
+      const completedSetCount = workoutExercise.sets.filter(
+        (set) => set.is_completed,
+      ).length;
+      const message =
+        completedSetCount > 0
+          ? `Remove ${workoutExercise.exercise.name}? This also archives ${completedSetCount} completed set${completedSetCount === 1 ? '' : 's'} for this exercise.`
+          : `Remove ${workoutExercise.exercise.name} from this workout? Its sets will be archived.`;
+
+      Alert.alert('Remove exercise', message, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            void runQueuedMutation(async () => {
+              setMutating(true);
+              try {
+                await softDeleteWorkoutExercise(workoutExercise.id);
+                await loadWorkout(false);
+              } catch (error: unknown) {
+                Alert.alert(
+                  'Exercise not removed',
+                  error instanceof Error ? error.message : 'Try again.',
+                );
+              } finally {
+                setMutating(false);
+              }
+            });
+          },
+        },
+      ]);
     },
     [loadWorkout, runQueuedMutation],
   );
@@ -275,7 +384,22 @@ export default function WorkoutScreen() {
             {details.exercises.length} exercises
           </Text>
         </View>
-        <StatusPill status={details.status} />
+        <View style={styles.workoutHeaderActions}>
+          <StatusPill status={details.status} />
+          <Pressable
+            accessibilityRole="button"
+            disabled={isMutating}
+            onPress={() => {
+              void openExercisePicker();
+            }}
+            style={[
+              styles.compactActionButton,
+              isMutating ? styles.disabledAction : null,
+            ]}
+          >
+            <Text style={styles.compactActionText}>Add exercise</Text>
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
@@ -295,6 +419,9 @@ export default function WorkoutScreen() {
               }}
               onBlurSet={saveSetMetrics}
               onDeleteSet={confirmDeleteSet}
+              onRemoveExercise={() => {
+                confirmRemoveExercise(workoutExercise);
+              }}
               onToggleSet={toggleCompleted}
               onUpdateDraft={updateDraft}
               onUsePreviousValues={() => {
@@ -308,7 +435,101 @@ export default function WorkoutScreen() {
           ))
         )}
       </ScrollView>
+
+      <ExercisePickerModal
+        exercises={filteredPickerExercises}
+        isLoading={isLoadingExercises}
+        isMutating={isMutating}
+        onClose={() => {
+          setExercisePickerVisible(false);
+        }}
+        onSelectExercise={(exerciseId) => {
+          void addExercise(exerciseId);
+        }}
+        onSearchChange={setExerciseSearch}
+        searchValue={exerciseSearch}
+        visible={isExercisePickerVisible}
+      />
     </Screen>
+  );
+}
+
+type ExercisePickerModalProps = {
+  exercises: Exercise[];
+  isLoading: boolean;
+  isMutating: boolean;
+  onClose: () => void;
+  onSearchChange: (value: string) => void;
+  onSelectExercise: (exerciseId: string) => void;
+  searchValue: string;
+  visible: boolean;
+};
+
+function ExercisePickerModal({
+  exercises,
+  isLoading,
+  isMutating,
+  onClose,
+  onSearchChange,
+  onSelectExercise,
+  searchValue,
+  visible,
+}: ExercisePickerModalProps) {
+  return (
+    <Modal
+      animationType="slide"
+      onRequestClose={onClose}
+      transparent
+      visible={visible}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalSheet}>
+          <Text style={styles.modalTitle}>Add exercise</Text>
+          <TextInput
+            onChangeText={onSearchChange}
+            placeholder="Search exercises"
+            placeholderTextColor={colors.textMuted}
+            style={styles.searchInput}
+            value={searchValue}
+          />
+          {isLoading ? (
+            <View style={styles.centeredPicker}>
+              <ActivityIndicator color={colors.accent} />
+            </View>
+          ) : (
+            <ScrollView contentContainerStyle={styles.exercisePickerList}>
+              {exercises.length === 0 ? (
+                <EmptyState
+                  body="Try a different exercise name or muscle."
+                  title="No exercises found"
+                />
+              ) : (
+                exercises.map((exercise) => (
+                  <Pressable
+                    disabled={isMutating}
+                    key={exercise.id}
+                    onPress={() => onSelectExercise(exercise.id)}
+                    style={({ pressed }) => [
+                      styles.exercisePickerRow,
+                      pressed ? styles.pressedRow : null,
+                      isMutating ? styles.disabledAction : null,
+                    ]}
+                  >
+                    <Text style={styles.exercisePickerName}>{exercise.name}</Text>
+                    <Text style={styles.exercisePickerMeta}>
+                      {exercise.primary_muscle} / {exercise.category}
+                    </Text>
+                  </Pressable>
+                ))
+              )}
+            </ScrollView>
+          )}
+          <AppButton disabled={isMutating} onPress={onClose} variant="secondary">
+            Close
+          </AppButton>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -318,6 +539,7 @@ type ExerciseCardProps = {
   onAddSet: () => void;
   onBlurSet: (set: WorkoutSetDetails, trackType: TrackType) => Promise<void>;
   onDeleteSet: (set: WorkoutSetDetails) => void;
+  onRemoveExercise: () => void;
   onToggleSet: (
     set: WorkoutSetDetails,
     trackType: TrackType,
@@ -339,6 +561,7 @@ function ExerciseCard({
   onAddSet,
   onBlurSet,
   onDeleteSet,
+  onRemoveExercise,
   onToggleSet,
   onUpdateDraft,
   onUsePreviousValues,
@@ -370,6 +593,14 @@ function ExerciseCard({
             ]}
           >
             <Text style={styles.usePreviousText}>Use previous values</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            disabled={isMutating}
+            onPress={onRemoveExercise}
+            style={isMutating ? styles.disabledAction : null}
+          >
+            <Text style={styles.removeExerciseText}>Remove exercise</Text>
           </Pressable>
         </View>
       </View>
@@ -462,7 +693,9 @@ function SetRow({
             <Pressable disabled={isMutating} onPress={onDelete}>
               <Text style={styles.deleteText}>Delete</Text>
             </Pressable>
-          ) : null}
+          ) : (
+            <Text style={styles.lockedText}>Locked</Text>
+          )}
         </View>
       </View>
       <MetricInputs
@@ -730,6 +963,24 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: spacing.xs,
   },
+  workoutHeaderActions: {
+    alignItems: 'flex-end',
+    gap: spacing.sm,
+  },
+  compactActionButton: {
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  compactActionText: {
+    ...typography.caption,
+    color: colors.accent,
+  },
+  disabledAction: {
+    opacity: 0.45,
+  },
   dateText: {
     ...typography.heading,
     color: colors.text,
@@ -778,6 +1029,11 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.accent,
     textAlign: 'center',
+  },
+  removeExerciseText: {
+    ...typography.caption,
+    color: colors.danger,
+    textAlign: 'right',
   },
   setList: {
     gap: spacing.sm,
@@ -838,6 +1094,10 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.danger,
   },
+  lockedText: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
   inputGrid: {
     gap: spacing.sm,
   },
@@ -857,5 +1117,61 @@ const styles = StyleSheet.create({
     color: colors.text,
     minHeight: 44,
     paddingHorizontal: spacing.md,
+  },
+  modalOverlay: {
+    backgroundColor: 'rgba(0, 0, 0, 0.62)',
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    backgroundColor: colors.background,
+    borderColor: colors.border,
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: spacing.md,
+    maxHeight: '78%',
+    padding: spacing.lg,
+  },
+  modalTitle: {
+    ...typography.heading,
+    color: colors.text,
+  },
+  searchInput: {
+    ...typography.body,
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    color: colors.text,
+    minHeight: 44,
+    paddingHorizontal: spacing.md,
+  },
+  centeredPicker: {
+    alignItems: 'center',
+    minHeight: 120,
+    justifyContent: 'center',
+  },
+  exercisePickerList: {
+    gap: spacing.sm,
+  },
+  exercisePickerRow: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: spacing.xs,
+    padding: spacing.md,
+  },
+  pressedRow: {
+    opacity: 0.72,
+  },
+  exercisePickerName: {
+    ...typography.body,
+    color: colors.text,
+  },
+  exercisePickerMeta: {
+    ...typography.caption,
+    color: colors.textMuted,
   },
 });

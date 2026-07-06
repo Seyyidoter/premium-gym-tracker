@@ -94,6 +94,15 @@ type MaxSetNumberRow = {
   max_set_number: number | null;
 };
 
+type MaxOrderIndexRow = {
+  max_order_index: number | null;
+};
+
+type ExerciseTrackTypeRow = {
+  id: string;
+  track_type: TrackType;
+};
+
 type PreviousWorkoutReferenceRow = {
   workout_id: string;
   scheduled_date: string;
@@ -605,6 +614,228 @@ INSERT INTO set_metrics (
   }
 
   return setDetails;
+}
+
+export async function softDeleteWorkout(workoutId: string): Promise<void> {
+  const workout = await getWorkoutById(workoutId);
+
+  if (!workout) {
+    throw new Error('Workout was not found.');
+  }
+
+  const database = await getReadyDatabase();
+  const timestamp = nowIso();
+
+  await database.withTransactionAsync(async () => {
+    await database.runAsync(
+      `
+UPDATE set_metrics
+SET deleted_at = ?, updated_at = ?
+WHERE deleted_at IS NULL
+  AND set_id IN (
+    SELECT s.id
+    FROM sets s
+    INNER JOIN workout_exercises we ON we.id = s.workout_exercise_id
+    WHERE we.workout_id = ?
+  );
+`,
+      timestamp,
+      timestamp,
+      workoutId,
+    );
+
+    await database.runAsync(
+      `
+UPDATE sets
+SET deleted_at = ?, updated_at = ?
+WHERE deleted_at IS NULL
+  AND workout_exercise_id IN (
+    SELECT id
+    FROM workout_exercises
+    WHERE workout_id = ?
+  );
+`,
+      timestamp,
+      timestamp,
+      workoutId,
+    );
+
+    await database.runAsync(
+      `
+UPDATE workout_exercises
+SET deleted_at = ?, updated_at = ?
+WHERE workout_id = ? AND deleted_at IS NULL;
+`,
+      timestamp,
+      timestamp,
+      workoutId,
+    );
+
+    await database.runAsync(
+      `
+UPDATE workouts
+SET deleted_at = ?, updated_at = ?
+WHERE id = ? AND deleted_at IS NULL;
+`,
+      timestamp,
+      timestamp,
+      workoutId,
+    );
+  });
+}
+
+export async function addExerciseToWorkout(
+  workoutId: string,
+  exerciseId: string,
+): Promise<WorkoutExercise> {
+  const workout = await getWorkoutById(workoutId);
+
+  if (!workout) {
+    throw new Error('Workout was not found.');
+  }
+
+  const database = await getReadyDatabase();
+  const exercise = await database.getFirstAsync<ExerciseTrackTypeRow>(
+    `
+SELECT id, track_type
+FROM exercises
+WHERE id = ? AND deleted_at IS NULL
+LIMIT 1;
+`,
+    exerciseId,
+  );
+
+  if (!exercise) {
+    throw new Error('Exercise was not found.');
+  }
+
+  const row = await database.getFirstAsync<MaxOrderIndexRow>(
+    `
+SELECT MAX(order_index) AS max_order_index
+FROM workout_exercises
+WHERE workout_id = ? AND deleted_at IS NULL;
+`,
+    workoutId,
+  );
+  const timestamp = nowIso();
+  const workoutExerciseId = createLocalId();
+  const orderIndex = (row?.max_order_index ?? -1) + 1;
+  const defaultSetCount = getDefaultSetCount(exercise.track_type);
+
+  await database.withTransactionAsync(async () => {
+    await database.runAsync(
+      `
+INSERT INTO workout_exercises (
+  id,
+  workout_id,
+  exercise_id,
+  order_index,
+  created_at,
+  updated_at,
+  deleted_at
+) VALUES (?, ?, ?, ?, ?, ?, NULL);
+`,
+      workoutExerciseId,
+      workoutId,
+      exerciseId,
+      orderIndex,
+      timestamp,
+      timestamp,
+    );
+
+    for (let setNumber = 1; setNumber <= defaultSetCount; setNumber += 1) {
+      await insertEmptyWorkoutSet(
+        database,
+        workoutExerciseId,
+        setNumber,
+        timestamp,
+      );
+    }
+  });
+
+  await recomputeWorkoutStatus(workoutId);
+
+  const workoutExercise = await database.getFirstAsync<WorkoutExercise>(
+    `
+SELECT *
+FROM workout_exercises
+WHERE id = ? AND deleted_at IS NULL
+LIMIT 1;
+`,
+    workoutExerciseId,
+  );
+
+  if (!workoutExercise) {
+    throw new Error('Workout exercise was not created.');
+  }
+
+  return workoutExercise;
+}
+
+export async function softDeleteWorkoutExercise(
+  workoutExerciseId: string,
+): Promise<WorkoutStatus> {
+  const database = await getReadyDatabase();
+  const workoutExercise = await database.getFirstAsync<{
+    id: string;
+    workout_id: string;
+  }>(
+    `
+SELECT id, workout_id
+FROM workout_exercises
+WHERE id = ? AND deleted_at IS NULL
+LIMIT 1;
+`,
+    workoutExerciseId,
+  );
+
+  if (!workoutExercise) {
+    throw new Error('Workout exercise was not found.');
+  }
+
+  const timestamp = nowIso();
+
+  await database.withTransactionAsync(async () => {
+    await database.runAsync(
+      `
+UPDATE set_metrics
+SET deleted_at = ?, updated_at = ?
+WHERE deleted_at IS NULL
+  AND set_id IN (
+    SELECT id
+    FROM sets
+    WHERE workout_exercise_id = ?
+  );
+`,
+      timestamp,
+      timestamp,
+      workoutExerciseId,
+    );
+
+    await database.runAsync(
+      `
+UPDATE sets
+SET deleted_at = ?, updated_at = ?
+WHERE workout_exercise_id = ? AND deleted_at IS NULL;
+`,
+      timestamp,
+      timestamp,
+      workoutExerciseId,
+    );
+
+    await database.runAsync(
+      `
+UPDATE workout_exercises
+SET deleted_at = ?, updated_at = ?
+WHERE id = ? AND deleted_at IS NULL;
+`,
+      timestamp,
+      timestamp,
+      workoutExerciseId,
+    );
+  });
+
+  return recomputeWorkoutStatus(workoutExercise.workout_id);
 }
 
 export async function getPreviousSetMetricsForWorkout(
@@ -1205,6 +1436,61 @@ function getStatusFromCompletionSummary(
   }
 
   return 'in_progress';
+}
+
+async function insertEmptyWorkoutSet(
+  database: SQLiteDatabase,
+  workoutExerciseId: string,
+  setNumber: number,
+  timestamp: string,
+): Promise<void> {
+  const setId = createLocalId();
+
+  await database.runAsync(
+    `
+INSERT INTO sets (
+  id,
+  workout_exercise_id,
+  set_number,
+  set_type,
+  is_completed,
+  completed_at,
+  created_at,
+  updated_at,
+  deleted_at
+) VALUES (?, ?, ?, 'normal', 0, NULL, ?, ?, NULL);
+`,
+    setId,
+    workoutExerciseId,
+    setNumber,
+    timestamp,
+    timestamp,
+  );
+
+  await database.runAsync(
+    `
+INSERT INTO set_metrics (
+  set_id,
+  weight,
+  reps,
+  distance_km,
+  incline,
+  duration_seconds,
+  rpe,
+  notes,
+  created_at,
+  updated_at,
+  deleted_at
+) VALUES (?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, NULL);
+`,
+    setId,
+    timestamp,
+    timestamp,
+  );
+}
+
+function getDefaultSetCount(trackType: TrackType): number {
+  return trackType === 'weight_reps' ? 3 : 1;
 }
 
 function mapPreviousMetricsBySetNumber(

@@ -2,6 +2,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -24,6 +25,7 @@ import {
   createWorkoutFromRoutine,
   listWorkoutSummariesBetween,
   listWorkoutSummariesByDate,
+  softDeleteWorkout,
 } from '@/db/repositories/workoutRepository';
 import {
   formatMonthTitle,
@@ -48,6 +50,9 @@ export default function CalendarScreen() {
   const [routines, setRoutines] = useState<RoutineListItem[]>([]);
   const [isModalVisible, setModalVisible] = useState(false);
   const [isLoadingMonth, setLoadingMonth] = useState(true);
+  const [deletingWorkoutId, setDeletingWorkoutId] = useState<string | null>(
+    null,
+  );
   const [isSaving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const longPressDateRef = useRef<string | null>(null);
@@ -130,6 +135,45 @@ export default function CalendarScreen() {
       }
     },
     [assignDateKey, loadMonth, loadSelectedDay],
+  );
+
+  const deleteWorkout = useCallback(
+    async (workoutId: string) => {
+      setDeletingWorkoutId(workoutId);
+      try {
+        await softDeleteWorkout(workoutId);
+        await loadSelectedDay();
+        await loadMonth();
+      } catch (error: unknown) {
+        Alert.alert(
+          'Workout not deleted',
+          error instanceof Error ? error.message : 'Try again.',
+        );
+      } finally {
+        setDeletingWorkoutId(null);
+      }
+    },
+    [loadMonth, loadSelectedDay],
+  );
+
+  const confirmDeleteWorkout = useCallback(
+    (workout: WorkoutSummary) => {
+      Alert.alert(
+        'Delete workout',
+        'This workout will be removed from your calendar. Its exercises and sets stay safely archived.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: () => {
+              void deleteWorkout(workout.id);
+            },
+          },
+        ],
+      );
+    },
+    [deleteWorkout],
   );
 
   return (
@@ -215,15 +259,9 @@ export default function CalendarScreen() {
           />
         ) : (
           selectedWorkouts.map((workout) => (
-            <Pressable
+            <View
               key={workout.id}
-              onPress={() => {
-                router.push(`/workout/${workout.id}`);
-              }}
-              style={({ pressed }) => [
-                styles.workoutCard,
-                pressed ? styles.pressedDay : null,
-              ]}
+              style={styles.workoutCard}
             >
               <View style={styles.cardHeader}>
                 <View style={styles.cardTitleColumn}>
@@ -236,8 +274,27 @@ export default function CalendarScreen() {
                 </View>
                 <StatusPill status={workout.status} />
               </View>
-              <Text style={styles.openText}>Open workout</Text>
-            </Pressable>
+              <View style={styles.workoutActions}>
+                <Pressable
+                  disabled={deletingWorkoutId === workout.id}
+                  onPress={() => {
+                    router.push(`/workout/${workout.id}`);
+                  }}
+                >
+                  <Text style={styles.openText}>Open workout</Text>
+                </Pressable>
+                <Pressable
+                  disabled={deletingWorkoutId === workout.id}
+                  onPress={() => {
+                    confirmDeleteWorkout(workout);
+                  }}
+                >
+                  <Text style={styles.deleteText}>
+                    {deletingWorkoutId === workout.id ? 'Deleting' : 'Delete'}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
           ))
         )}
       </ScrollView>
@@ -393,6 +450,11 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: spacing.xs,
   },
+  workoutActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
   workoutTitle: {
     ...typography.heading,
     color: colors.text,
@@ -445,5 +507,9 @@ const styles = StyleSheet.create({
   openText: {
     ...typography.caption,
     color: colors.accent,
+  },
+  deleteText: {
+    ...typography.caption,
+    color: colors.danger,
   },
 });

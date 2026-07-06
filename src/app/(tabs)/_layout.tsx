@@ -18,8 +18,14 @@ export default function TabsLayout() {
       }}
     >
       <Tabs.Screen name="index" options={{ title: 'Today' }} />
-      <Tabs.Screen name="calendar" options={{ title: 'Calendar' }} />
-      <Tabs.Screen name="routines" options={{ title: 'Routines' }} />
+      <Tabs.Screen
+        name="calendar"
+        options={{ headerShown: false, title: 'Calendar' }}
+      />
+      <Tabs.Screen
+        name="routines"
+        options={{ headerShown: false, title: 'Routines' }}
+      />
     </Tabs>
   );
 }
