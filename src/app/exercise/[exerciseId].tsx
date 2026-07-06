@@ -19,6 +19,14 @@ import { getExerciseById } from '@/db/repositories/exerciseRepository';
 import type { ExerciseRecentHistoryItem } from '@/db/repositories/workoutRepository';
 import { getExerciseRecentHistory } from '@/db/repositories/workoutRepository';
 import type { Exercise, TrackType } from '@/db/types';
+import {
+  formatDistanceKm,
+  formatDuration,
+  formatMetricNumber,
+  formatShortDate,
+  formatStatusLabel,
+  formatVolumeKg,
+} from '@/features/history/formatters';
 
 const trackTypeLabels: Record<TrackType, string> = {
   distance_duration_incline: 'Distance / incline / duration',
@@ -161,22 +169,37 @@ type RecentHistoryBlockProps = {
 function RecentHistoryBlock({ history }: RecentHistoryBlockProps) {
   return (
     <View style={styles.recentHistoryBlock}>
-      <Text style={styles.sectionTitle}>Recent history</Text>
+      <View style={styles.recentHistoryHeader}>
+        <Text style={styles.sectionTitle}>Recent history</Text>
+        <Text style={styles.recentHistoryMeta}>Last 5 workouts</Text>
+      </View>
       {history.length === 0 ? (
-        <Text style={styles.historyEmpty}>No history yet.</Text>
+        <View style={styles.historyEmptyBox}>
+          <Text style={styles.historyEmptyTitle}>No history yet</Text>
+          <Text style={styles.historyEmpty}>
+            Logged performances for this exercise will appear here.
+          </Text>
+        </View>
       ) : (
         <View style={styles.historyList}>
           {history.map((item) => (
             <View key={item.workout_id} style={styles.historyRow}>
               <View style={styles.historyDateColumn}>
                 <Text style={styles.historyDate}>
-                  {formatHistoryDate(item.scheduled_date)}
+                  {formatShortDate(item.scheduled_date)}
                 </Text>
                 <Text style={styles.historyMeta}>
-                  {item.completed_set_count}/{item.set_count} sets
+                  {formatStatusLabel(item.status)}
                 </Text>
               </View>
-              <Text style={styles.historyValue}>{formatHistoryValue(item)}</Text>
+              <View style={styles.historyValueColumn}>
+                <Text style={styles.historyValue}>
+                  {formatHistoryValue(item)}
+                </Text>
+                <Text style={styles.historyMeta}>
+                  {item.completed_set_count}/{item.set_count} sets completed
+                </Text>
+              </View>
             </View>
           ))}
         </View>
@@ -202,19 +225,19 @@ function InfoRow({ label, value }: InfoRowProps) {
 function formatHistoryValue(item: ExerciseRecentHistoryItem): string {
   if (item.track_type === 'weight_reps') {
     if (item.best_weight !== null && item.best_reps !== null) {
-      return `${formatNumber(item.best_weight)} x ${formatNumber(
+      return `Best ${formatMetricNumber(item.best_weight)} x ${formatMetricNumber(
         item.best_reps,
-      )} best / ${formatNumber(item.total_strength_volume)} volume`;
+      )} / ${formatVolumeKg(item.total_strength_volume)}`;
     }
 
-    return `${formatNumber(item.total_strength_volume)} volume`;
+    return formatVolumeKg(item.total_strength_volume);
   }
 
   if (item.track_type === 'distance_duration_incline') {
-    const parts = [`${formatNumber(item.total_cardio_distance_km)} km`];
+    const parts = [formatDistanceKm(item.total_cardio_distance_km)];
 
     if (item.max_incline !== null) {
-      parts.push(`${formatNumber(item.max_incline)} incline`);
+      parts.push(`${formatMetricNumber(item.max_incline)} incline`);
     }
 
     if (item.total_duration_seconds > 0) {
@@ -225,39 +248,6 @@ function formatHistoryValue(item: ExerciseRecentHistoryItem): string {
   }
 
   return formatDuration(item.total_duration_seconds);
-}
-
-function formatHistoryDate(dateKey: string): string {
-  const [year, month, day] = dateKey.split('-').map(Number);
-  const date = new Date(year, month - 1, day);
-
-  return date.toLocaleDateString(undefined, {
-    day: 'numeric',
-    month: 'short',
-  });
-}
-
-function formatDuration(seconds: number): string {
-  if (seconds <= 0) {
-    return '0s';
-  }
-
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = Math.round(seconds % 60);
-
-  if (minutes === 0) {
-    return `${remainingSeconds}s`;
-  }
-
-  if (remainingSeconds === 0) {
-    return `${minutes}m`;
-  }
-
-  return `${minutes}m ${remainingSeconds}s`;
-}
-
-function formatNumber(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
 const styles = StyleSheet.create({
@@ -409,6 +399,15 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     padding: spacing.md,
   },
+  recentHistoryHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  recentHistoryMeta: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
   historyList: {
     gap: spacing.sm,
   },
@@ -426,14 +425,18 @@ const styles = StyleSheet.create({
   historyDateColumn: {
     minWidth: 72,
   },
+  historyValueColumn: {
+    alignItems: 'flex-end',
+    flex: 1,
+    gap: spacing.xs,
+  },
   historyDate: {
     ...typography.caption,
     color: colors.text,
   },
   historyValue: {
     ...typography.caption,
-    color: colors.textMuted,
-    flex: 1,
+    color: colors.text,
     textAlign: 'right',
   },
   historyMeta: {
@@ -441,8 +444,20 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginTop: spacing.xs,
   },
-  historyEmpty: {
+  historyEmptyBox: {
+    backgroundColor: colors.background,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: spacing.xs,
+    padding: spacing.md,
+  },
+  historyEmptyTitle: {
     ...typography.body,
+    color: colors.text,
+  },
+  historyEmpty: {
+    ...typography.caption,
     color: colors.textMuted,
   },
   sectionTitle: {

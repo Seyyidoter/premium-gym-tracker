@@ -16,15 +16,23 @@ import { colors } from '@/design-system/colors';
 import { spacing } from '@/design-system/spacing';
 import { typography } from '@/design-system/typography';
 import type {
+  WeeklyWorkoutSummary,
   WorkoutHistoryItem,
   WorkoutHistoryStatusFilter,
   WorkoutHistorySummary,
 } from '@/db/repositories/workoutRepository';
 import {
+  getWeeklyWorkoutSummary,
   getWorkoutHistorySummary,
   listWorkoutHistory,
 } from '@/db/repositories/workoutRepository';
-import { formatReadableDate } from '@/features/calendar/dateUtils';
+import {
+  formatCount,
+  formatDate,
+  formatDistanceKm,
+  formatDuration,
+  formatVolumeKg,
+} from '@/features/history/formatters';
 
 const statusFilters: { label: string; value: WorkoutHistoryStatusFilter }[] = [
   { label: 'All', value: 'all' },
@@ -44,11 +52,22 @@ const emptySummary: WorkoutHistorySummary = {
   workouts_this_week: 0,
 };
 
+const emptyWeeklySummary: WeeklyWorkoutSummary = {
+  completed_sets: 0,
+  completed_workouts: 0,
+  total_cardio_distance_km: 0,
+  total_cardio_duration_seconds: 0,
+  total_strength_volume: 0,
+  total_workouts: 0,
+};
+
 export default function HistoryScreen() {
   const router = useRouter();
   const [selectedStatus, setSelectedStatus] =
     useState<WorkoutHistoryStatusFilter>('all');
   const [summary, setSummary] = useState<WorkoutHistorySummary>(emptySummary);
+  const [weeklySummary, setWeeklySummary] =
+    useState<WeeklyWorkoutSummary>(emptyWeeklySummary);
   const [workouts, setWorkouts] = useState<WorkoutHistoryItem[]>([]);
   const [isLoading, setLoading] = useState(true);
 
@@ -56,11 +75,13 @@ export default function HistoryScreen() {
     setLoading(true);
     try {
       const nextSummary = await getWorkoutHistorySummary();
+      const nextWeeklySummary = await getWeeklyWorkoutSummary();
       const nextWorkouts = await listWorkoutHistory({
         status: selectedStatus,
       });
 
       setSummary(nextSummary);
+      setWeeklySummary(nextWeeklySummary);
       setWorkouts(nextWorkouts);
     } finally {
       setLoading(false);
@@ -83,8 +104,8 @@ export default function HistoryScreen() {
             </View>
           ) : (
             <EmptyState
-              body="Workouts will appear here once you plan or complete them."
-              title="No workouts"
+              body="Plan a routine or complete a workout and it will show up here."
+              title="No workouts yet"
             />
           )
         }
@@ -93,6 +114,7 @@ export default function HistoryScreen() {
             selectedStatus={selectedStatus}
             setSelectedStatus={setSelectedStatus}
             summary={summary}
+            weeklySummary={weeklySummary}
           />
         }
         contentContainerStyle={styles.listContent}
@@ -115,47 +137,57 @@ type HistoryHeaderProps = {
   selectedStatus: WorkoutHistoryStatusFilter;
   setSelectedStatus: (status: WorkoutHistoryStatusFilter) => void;
   summary: WorkoutHistorySummary;
+  weeklySummary: WeeklyWorkoutSummary;
 };
 
 function HistoryHeader({
   selectedStatus,
   setSelectedStatus,
   summary,
+  weeklySummary,
 }: HistoryHeaderProps) {
   return (
     <View style={styles.headerStack}>
-      <View style={styles.summaryGrid}>
-        <SummaryCard label="Total workouts" value={String(summary.total_workouts)} />
-        <SummaryCard
-          label="Completed"
-          value={String(summary.completed_workouts)}
-        />
-        <SummaryCard
-          label="This week"
-          value={String(summary.workouts_this_week)}
-        />
-        <SummaryCard label="Completed sets" value={String(summary.completed_sets)} />
-        <SummaryCard
-          label="Strength volume"
-          value={formatNumber(summary.total_strength_volume)}
-        />
-        <SummaryCard
-          label="Cardio distance"
-          value={`${formatNumber(summary.total_cardio_distance_km)} km`}
-        />
-        <SummaryCard
-          label="Cardio duration"
-          value={formatDuration(summary.total_cardio_duration_seconds)}
-        />
-        <SummaryCard
-          label="Last completed"
-          value={
-            summary.last_completed_workout_date
-              ? formatReadableDate(summary.last_completed_workout_date)
-              : 'None'
-          }
-        />
+      <View style={styles.summaryPanel}>
+        <Text style={styles.sectionEyebrow}>All time</Text>
+        <View style={styles.heroSummaryRow}>
+          <SummaryCard
+            label="Workouts"
+            subvalue={`${formatCount(summary.completed_workouts)} completed`}
+            value={formatCount(summary.total_workouts)}
+          />
+          <SummaryCard
+            label="Last completed"
+            subvalue="Workout date"
+            value={
+              summary.last_completed_workout_date
+                ? formatDate(summary.last_completed_workout_date)
+                : 'No data yet'
+            }
+          />
+        </View>
+
+        <View style={styles.compactStatsGrid}>
+          <SummaryCard
+            label="Completed sets"
+            value={formatCount(summary.completed_sets)}
+          />
+          <SummaryCard
+            label="Strength volume"
+            value={formatVolumeKg(summary.total_strength_volume)}
+          />
+          <SummaryCard
+            label="Cardio distance"
+            value={formatDistanceKm(summary.total_cardio_distance_km)}
+          />
+          <SummaryCard
+            label="Cardio duration"
+            value={formatDuration(summary.total_cardio_duration_seconds)}
+          />
+        </View>
       </View>
+
+      <WeeklySummary summary={weeklySummary} />
 
       <View style={styles.filterRow}>
         {statusFilters.map((filter) => {
@@ -191,16 +223,81 @@ function HistoryHeader({
 
 type SummaryCardProps = {
   label: string;
+  subvalue?: string;
   value: string;
 };
 
-function SummaryCard({ label, value }: SummaryCardProps) {
+function SummaryCard({ label, subvalue, value }: SummaryCardProps) {
   return (
     <View style={styles.summaryCard}>
       <Text style={styles.summaryLabel}>{label}</Text>
       <Text numberOfLines={1} style={styles.summaryValue}>
         {value}
       </Text>
+      {subvalue ? (
+        <Text numberOfLines={1} style={styles.summarySubvalue}>
+          {subvalue}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+type WeeklySummaryProps = {
+  summary: WeeklyWorkoutSummary;
+};
+
+function WeeklySummary({ summary }: WeeklySummaryProps) {
+  return (
+    <View style={styles.weeklyPanel}>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>This week</Text>
+        <Text style={styles.sectionMeta}>
+          {formatCount(summary.completed_workouts)} completed
+        </Text>
+      </View>
+      <View style={styles.weeklyGrid}>
+        <WeeklyMetric
+          label="Workouts"
+          value={formatCount(summary.total_workouts)}
+        />
+        <WeeklyMetric
+          label="Completed"
+          value={formatCount(summary.completed_workouts)}
+        />
+        <WeeklyMetric
+          label="Sets"
+          value={formatCount(summary.completed_sets)}
+        />
+        <WeeklyMetric
+          label="Volume"
+          value={formatVolumeKg(summary.total_strength_volume)}
+        />
+        <WeeklyMetric
+          label="Distance"
+          value={formatDistanceKm(summary.total_cardio_distance_km)}
+        />
+        <WeeklyMetric
+          label="Duration"
+          value={formatDuration(summary.total_cardio_duration_seconds)}
+        />
+      </View>
+    </View>
+  );
+}
+
+type WeeklyMetricProps = {
+  label: string;
+  value: string;
+};
+
+function WeeklyMetric({ label, value }: WeeklyMetricProps) {
+  return (
+    <View style={styles.weeklyMetric}>
+      <Text numberOfLines={1} style={styles.weeklyValue}>
+        {value}
+      </Text>
+      <Text style={styles.weeklyLabel}>{label}</Text>
     </View>
   );
 }
@@ -226,25 +323,34 @@ function WorkoutHistoryCard({ item, onPress }: WorkoutHistoryCardProps) {
           <Text style={styles.workoutTitle}>
             {item.routine_name ?? 'Planned workout'}
           </Text>
-          <Text style={styles.workoutDate}>
-            {formatReadableDate(item.scheduled_date)}
-          </Text>
+          <Text style={styles.workoutDate}>{formatDate(item.scheduled_date)}</Text>
         </View>
-        <StatusPill status={item.status} />
+        <View style={styles.statusShell}>
+          <StatusPill status={item.status} />
+        </View>
       </View>
 
       <View style={styles.metricRow}>
-        <Metric label="Exercises" value={String(item.exercise_count)} />
-        <Metric label="Sets" value={String(item.set_count)} />
+        <Metric label="Exercises" value={formatCount(item.exercise_count)} />
         <Metric
-          label="Done"
-          value={`${item.completed_set_count}/${item.set_count}`}
+          label="Sets done"
+          value={`${formatCount(item.completed_set_count)}/${formatCount(
+            item.set_count,
+          )}`}
         />
       </View>
 
-      <Text style={styles.statLine}>
-        {statParts.length > 0 ? statParts.join(' / ') : 'No logged metrics yet'}
-      </Text>
+      <View style={styles.statBadgeRow}>
+        {statParts.length > 0 ? (
+          statParts.map((part) => (
+            <View key={part} style={styles.statBadge}>
+              <Text style={styles.statBadgeText}>{part}</Text>
+            </View>
+          ))
+        ) : (
+          <Text style={styles.statLine}>No logged metrics yet</Text>
+        )}
+      </View>
     </Pressable>
   );
 }
@@ -267,11 +373,11 @@ function getWorkoutStatParts(item: WorkoutHistoryItem): string[] {
   const parts: string[] = [];
 
   if (item.total_strength_volume > 0) {
-    parts.push(`${formatNumber(item.total_strength_volume)} volume`);
+    parts.push(formatVolumeKg(item.total_strength_volume));
   }
 
   if (item.total_cardio_distance_km > 0) {
-    parts.push(`${formatNumber(item.total_cardio_distance_km)} km`);
+    parts.push(formatDistanceKm(item.total_cardio_distance_km));
   }
 
   if (item.total_cardio_duration_seconds > 0) {
@@ -279,29 +385,6 @@ function getWorkoutStatParts(item: WorkoutHistoryItem): string[] {
   }
 
   return parts;
-}
-
-function formatDuration(seconds: number): string {
-  if (seconds <= 0) {
-    return '0 min';
-  }
-
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = Math.round(seconds % 60);
-
-  if (minutes === 0) {
-    return `${remainingSeconds}s`;
-  }
-
-  if (remainingSeconds === 0) {
-    return `${minutes}m`;
-  }
-
-  return `${minutes}m ${remainingSeconds}s`;
-}
-
-function formatNumber(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
 const styles = StyleSheet.create({
@@ -317,21 +400,37 @@ const styles = StyleSheet.create({
   headerStack: {
     gap: spacing.md,
   },
-  summaryGrid: {
+  summaryPanel: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: spacing.md,
+    padding: spacing.md,
+  },
+  sectionEyebrow: {
+    ...typography.caption,
+    color: colors.accent,
+  },
+  heroSummaryRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  compactStatsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
   },
   summaryCard: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.background,
     borderColor: colors.border,
     borderRadius: 8,
     borderWidth: StyleSheet.hairlineWidth,
     flexBasis: '48%',
     flexGrow: 1,
     gap: spacing.xs,
-    minHeight: 78,
-    padding: spacing.md,
+    minHeight: 74,
+    padding: spacing.sm,
   },
   summaryLabel: {
     ...typography.caption,
@@ -340,6 +439,54 @@ const styles = StyleSheet.create({
   summaryValue: {
     ...typography.heading,
     color: colors.text,
+  },
+  summarySubvalue: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+  weeklyPanel: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: spacing.md,
+    padding: spacing.md,
+  },
+  sectionHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  sectionTitle: {
+    ...typography.heading,
+    color: colors.text,
+  },
+  sectionMeta: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+  weeklyGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  weeklyMetric: {
+    backgroundColor: colors.background,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexBasis: '30%',
+    flexGrow: 1,
+    gap: spacing.xs,
+    padding: spacing.sm,
+  },
+  weeklyValue: {
+    ...typography.body,
+    color: colors.text,
+  },
+  weeklyLabel: {
+    ...typography.caption,
+    color: colors.textMuted,
   },
   filterRow: {
     backgroundColor: colors.surface,
@@ -355,11 +502,13 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     flex: 1,
     justifyContent: 'center',
-    minHeight: 38,
+    minHeight: 40,
     paddingHorizontal: spacing.xs,
   },
   filterButtonSelected: {
     backgroundColor: colors.surfaceMuted,
+    borderColor: colors.accent,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   filterText: {
     ...typography.caption,
@@ -398,6 +547,9 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textMuted,
   },
+  statusShell: {
+    alignItems: 'flex-end',
+  },
   metricRow: {
     flexDirection: 'row',
     gap: spacing.sm,
@@ -418,6 +570,24 @@ const styles = StyleSheet.create({
   metricLabel: {
     ...typography.caption,
     color: colors.textMuted,
+  },
+  statBadgeRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  statBadge: {
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  statBadgeText: {
+    ...typography.caption,
+    color: colors.text,
   },
   statLine: {
     ...typography.caption,

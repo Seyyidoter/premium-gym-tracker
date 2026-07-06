@@ -66,6 +66,15 @@ export type WorkoutHistorySummary = {
   last_completed_workout_date: string | null;
 };
 
+export type WeeklyWorkoutSummary = {
+  total_workouts: number;
+  completed_workouts: number;
+  completed_sets: number;
+  total_strength_volume: number;
+  total_cardio_distance_km: number;
+  total_cardio_duration_seconds: number;
+};
+
 export type ExerciseRecentHistoryItem = {
   workout_id: string;
   scheduled_date: string;
@@ -166,6 +175,15 @@ type WorkoutHistorySummaryRow = {
   total_cardio_distance_km: number | null;
   total_cardio_duration_seconds: number | null;
   last_completed_workout_date: string | null;
+};
+
+type WeeklyWorkoutSummaryRow = {
+  total_workouts: number | null;
+  completed_workouts: number | null;
+  completed_sets: number | null;
+  total_strength_volume: number | null;
+  total_cardio_distance_km: number | null;
+  total_cardio_duration_seconds: number | null;
 };
 
 type ExerciseRecentHistoryMetricRow = {
@@ -1383,6 +1401,77 @@ WHERE w.deleted_at IS NULL;
     total_cardio_distance_km: row?.total_cardio_distance_km ?? 0,
     total_cardio_duration_seconds: row?.total_cardio_duration_seconds ?? 0,
     last_completed_workout_date: row?.last_completed_workout_date ?? null,
+  };
+}
+
+export async function getWeeklyWorkoutSummary(): Promise<WeeklyWorkoutSummary> {
+  const database = await getReadyDatabase();
+  const weekRange = getCurrentWeekRange();
+  const row = await database.getFirstAsync<WeeklyWorkoutSummaryRow>(
+    `
+SELECT
+  COUNT(DISTINCT w.id) AS total_workouts,
+  COUNT(DISTINCT CASE WHEN w.status = 'completed' THEN w.id ELSE NULL END) AS completed_workouts,
+  COALESCE(SUM(CASE WHEN s.is_completed = 1 THEN 1 ELSE 0 END), 0) AS completed_sets,
+  COALESCE(
+    SUM(
+      CASE
+        WHEN e.track_type = 'weight_reps'
+          AND sm.weight IS NOT NULL
+          AND sm.reps IS NOT NULL
+        THEN sm.weight * sm.reps
+        ELSE 0
+      END
+    ),
+    0
+  ) AS total_strength_volume,
+  COALESCE(
+    SUM(
+      CASE
+        WHEN e.track_type = 'distance_duration_incline'
+        THEN COALESCE(sm.distance_km, 0)
+        ELSE 0
+      END
+    ),
+    0
+  ) AS total_cardio_distance_km,
+  COALESCE(
+    SUM(
+      CASE
+        WHEN e.track_type IN ('distance_duration_incline', 'duration_only')
+        THEN COALESCE(sm.duration_seconds, 0)
+        ELSE 0
+      END
+    ),
+    0
+  ) AS total_cardio_duration_seconds
+FROM workouts w
+LEFT JOIN workout_exercises we
+  ON we.workout_id = w.id
+  AND we.deleted_at IS NULL
+LEFT JOIN exercises e
+  ON e.id = we.exercise_id
+  AND e.deleted_at IS NULL
+LEFT JOIN sets s
+  ON s.workout_exercise_id = we.id
+  AND s.deleted_at IS NULL
+LEFT JOIN set_metrics sm
+  ON sm.set_id = s.id
+  AND sm.deleted_at IS NULL
+WHERE w.deleted_at IS NULL
+  AND w.scheduled_date BETWEEN ? AND ?;
+`,
+    weekRange.start,
+    weekRange.end,
+  );
+
+  return {
+    completed_sets: row?.completed_sets ?? 0,
+    completed_workouts: row?.completed_workouts ?? 0,
+    total_cardio_distance_km: row?.total_cardio_distance_km ?? 0,
+    total_cardio_duration_seconds: row?.total_cardio_duration_seconds ?? 0,
+    total_strength_volume: row?.total_strength_volume ?? 0,
+    total_workouts: row?.total_workouts ?? 0,
   };
 }
 

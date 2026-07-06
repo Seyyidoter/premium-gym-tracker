@@ -403,6 +403,15 @@ export default function WorkoutScreen() {
         </View>
       </View>
 
+      {details.status === 'completed' ? (
+        <View style={styles.completedHint}>
+          <Text style={styles.completedHintText}>This workout is completed.</Text>
+          <Text style={styles.completedHintMeta}>
+            You can still adjust logged values when needed.
+          </Text>
+        </View>
+      ) : null}
+
       <ScrollView contentContainerStyle={styles.content}>
         {details.exercises.length === 0 ? (
           <EmptyState
@@ -999,6 +1008,22 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   metaText: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+  completedHint: {
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.accent,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: spacing.xs,
+    padding: spacing.md,
+  },
+  completedHintText: {
+    ...typography.body,
+    color: colors.text,
+  },
+  completedHintMeta: {
     ...typography.caption,
     color: colors.textMuted,
   },

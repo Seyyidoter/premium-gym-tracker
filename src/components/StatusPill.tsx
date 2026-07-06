@@ -17,8 +17,10 @@ const statusLabels: Record<WorkoutStatus, string> = {
 
 export function StatusPill({ status }: StatusPillProps) {
   return (
-    <View style={[styles.pill, status === 'completed' ? styles.completed : null]}>
-      <Text style={styles.label}>{statusLabels[status]}</Text>
+    <View style={[styles.pill, styles[status]]}>
+      <Text style={[styles.label, status === 'completed' ? styles.completedLabel : null]}>
+        {statusLabels[status]}
+      </Text>
     </View>
   );
 }
@@ -33,11 +35,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
   },
+  planned: {
+    borderColor: colors.border,
+  },
+  in_progress: {
+    borderColor: colors.accent,
+  },
   completed: {
+    backgroundColor: colors.background,
     borderColor: colors.accent,
   },
   label: {
     ...typography.caption,
     color: colors.text,
+  },
+  completedLabel: {
+    color: colors.accent,
   },
 });
