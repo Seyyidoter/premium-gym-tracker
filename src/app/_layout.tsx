@@ -71,6 +71,7 @@ export default function RootLayout() {
           name="workout/[workoutId]"
           options={{ title: 'Workout' }}
         />
+        <Stack.Screen name="settings" options={{ headerShown: false }} />
         <Stack.Screen
           name="body-highlighter-poc"
           options={{ title: 'Body Map PoC' }}

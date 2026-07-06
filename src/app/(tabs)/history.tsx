@@ -111,6 +111,9 @@ export default function HistoryScreen() {
         }
         ListHeaderComponent={
           <HistoryHeader
+            onOpenSettings={() => {
+              router.push('/settings');
+            }}
             selectedStatus={selectedStatus}
             setSelectedStatus={setSelectedStatus}
             summary={summary}
@@ -134,6 +137,7 @@ export default function HistoryScreen() {
 }
 
 type HistoryHeaderProps = {
+  onOpenSettings: () => void;
   selectedStatus: WorkoutHistoryStatusFilter;
   setSelectedStatus: (status: WorkoutHistoryStatusFilter) => void;
   summary: WorkoutHistorySummary;
@@ -141,6 +145,7 @@ type HistoryHeaderProps = {
 };
 
 function HistoryHeader({
+  onOpenSettings,
   selectedStatus,
   setSelectedStatus,
   summary,
@@ -148,6 +153,21 @@ function HistoryHeader({
 }: HistoryHeaderProps) {
   return (
     <View style={styles.headerStack}>
+      <Pressable
+        accessibilityRole="button"
+        onPress={onOpenSettings}
+        style={({ pressed }) => [
+          styles.settingsButton,
+          pressed ? styles.pressed : null,
+        ]}
+      >
+        <View>
+          <Text style={styles.settingsTitle}>Settings / Data</Text>
+          <Text style={styles.settingsMeta}>Export or reset local data</Text>
+        </View>
+        <Text style={styles.settingsArrow}>Open</Text>
+      </Pressable>
+
       <View style={styles.summaryPanel}>
         <Text style={styles.sectionEyebrow}>All time</Text>
         <View style={styles.heroSummaryRow}>
@@ -399,6 +419,30 @@ const styles = StyleSheet.create({
   },
   headerStack: {
     gap: spacing.md,
+  },
+  settingsButton: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: spacing.md,
+    justifyContent: 'space-between',
+    padding: spacing.md,
+  },
+  settingsTitle: {
+    ...typography.heading,
+    color: colors.text,
+  },
+  settingsMeta: {
+    ...typography.caption,
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
+  settingsArrow: {
+    ...typography.caption,
+    color: colors.accent,
   },
   summaryPanel: {
     backgroundColor: colors.surface,
