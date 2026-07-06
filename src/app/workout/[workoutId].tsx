@@ -1,4 +1,4 @@
-import { useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -52,6 +52,7 @@ type MetricDraft = {
 
 export default function WorkoutScreen() {
   const { workoutId } = useLocalSearchParams<{ workoutId: string }>();
+  const router = useRouter();
   const [details, setDetails] = useState<WorkoutDetails | null>(null);
   const [previousMetricsByExercise, setPreviousMetricsByExercise] =
     useState<PreviousSetMetricsByWorkoutExercise>({});
@@ -419,6 +420,9 @@ export default function WorkoutScreen() {
               }}
               onBlurSet={saveSetMetrics}
               onDeleteSet={confirmDeleteSet}
+              onOpenExercise={() => {
+                router.push(`/exercise/${workoutExercise.exercise.id}`);
+              }}
               onRemoveExercise={() => {
                 confirmRemoveExercise(workoutExercise);
               }}
@@ -539,6 +543,7 @@ type ExerciseCardProps = {
   onAddSet: () => void;
   onBlurSet: (set: WorkoutSetDetails, trackType: TrackType) => Promise<void>;
   onDeleteSet: (set: WorkoutSetDetails) => void;
+  onOpenExercise: () => void;
   onRemoveExercise: () => void;
   onToggleSet: (
     set: WorkoutSetDetails,
@@ -561,6 +566,7 @@ function ExerciseCard({
   onAddSet,
   onBlurSet,
   onDeleteSet,
+  onOpenExercise,
   onRemoveExercise,
   onToggleSet,
   onUpdateDraft,
@@ -576,11 +582,18 @@ function ExerciseCard({
     <View style={styles.exerciseCard}>
       <View style={styles.exerciseHeader}>
         <View style={styles.headerTextColumn}>
-          <Text style={styles.exerciseName}>{workoutExercise.exercise.name}</Text>
+          <Pressable accessibilityRole="button" onPress={onOpenExercise}>
+            <Text style={styles.exerciseName}>
+              {workoutExercise.exercise.name}
+            </Text>
+          </Pressable>
           <Text style={styles.metaText}>{workoutExercise.exercise.track_type}</Text>
         </View>
         <View style={styles.exerciseHeaderActions}>
           <Text style={styles.metaText}>{workoutExercise.sets.length} sets</Text>
+          <Pressable accessibilityRole="button" onPress={onOpenExercise}>
+            <Text style={styles.infoText}>Info</Text>
+          </Pressable>
           <Pressable
             accessibilityRole="button"
             disabled={isMutating || !canUsePreviousValues}
@@ -1029,6 +1042,11 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.accent,
     textAlign: 'center',
+  },
+  infoText: {
+    ...typography.caption,
+    color: colors.accent,
+    textAlign: 'right',
   },
   removeExerciseText: {
     ...typography.caption,

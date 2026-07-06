@@ -41,9 +41,11 @@ export async function listExercises(
   }
 
   if (options.search?.trim()) {
-    where.push('(name LIKE ? OR primary_muscle LIKE ?)');
+    where.push(
+      '(name LIKE ? OR primary_muscle LIKE ? OR secondary_muscles LIKE ? OR category LIKE ?)',
+    );
     const searchTerm = `%${options.search.trim()}%`;
-    params.push(searchTerm, searchTerm);
+    params.push(searchTerm, searchTerm, searchTerm, searchTerm);
   }
 
   const rows = await database.getAllAsync<ExerciseRow>(
@@ -57,6 +59,14 @@ ORDER BY name COLLATE NOCASE ASC;
   );
 
   return rows.map(mapExerciseRow);
+}
+
+export async function listExercisesForLibrary(): Promise<Exercise[]> {
+  return listExercises();
+}
+
+export async function searchExercises(query: string): Promise<Exercise[]> {
+  return listExercises({ search: query });
 }
 
 export async function getExercisesForPicker(): Promise<Exercise[]> {
