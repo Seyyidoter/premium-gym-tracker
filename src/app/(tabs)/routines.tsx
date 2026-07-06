@@ -1,4 +1,4 @@
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import {
   Alert,
@@ -53,6 +53,7 @@ type DraftRoutineExercise = {
 };
 
 export default function RoutinesScreen() {
+  const router = useRouter();
   const [routineName, setRoutineName] = useState('');
   const [editingRoutineId, setEditingRoutineId] = useState<string | null>(null);
   const [draftExercises, setDraftExercises] = useState<DraftRoutineExercise[]>(
@@ -302,6 +303,9 @@ export default function RoutinesScreen() {
                       ),
                     );
                   }}
+                  onOpenExercise={() => {
+                    router.push(`/exercise/${draftExercise.exercise.id}`);
+                  }}
                   onRemoveSet={(setIndex) => {
                     setDraftExercises((current) =>
                       current.map((item) =>
@@ -377,6 +381,7 @@ type ExerciseCardProps = {
   draftExercise: DraftRoutineExercise;
   exerciseIndex: number;
   onAddSet: () => void;
+  onOpenExercise: () => void;
   onRemove: () => void;
   onRemoveSet: (setIndex: number) => void;
   onToggle: () => void;
@@ -387,6 +392,7 @@ function ExerciseCard({
   draftExercise,
   exerciseIndex,
   onAddSet,
+  onOpenExercise,
   onRemove,
   onRemoveSet,
   onToggle,
@@ -394,19 +400,26 @@ function ExerciseCard({
 }: ExerciseCardProps) {
   return (
     <View style={styles.exerciseCard}>
-      <Pressable onPress={onToggle} style={styles.exerciseCardHeader}>
-        <View style={styles.exerciseTextColumn}>
-          <Text style={styles.exerciseName}>
-            {exerciseIndex + 1}. {draftExercise.exercise.name}
-          </Text>
-          <Text style={styles.exerciseMeta}>
-            {draftExercise.exercise.track_type} / {draftExercise.sets.length} sets
+      <View style={styles.exerciseCardHeader}>
+        <Pressable onPress={onToggle} style={styles.exerciseHeaderToggle}>
+          <View style={styles.exerciseTextColumn}>
+            <Text style={styles.exerciseName}>
+              {exerciseIndex + 1}. {draftExercise.exercise.name}
+            </Text>
+            <Text style={styles.exerciseMeta}>
+              {draftExercise.exercise.track_type} / {draftExercise.sets.length} sets
+            </Text>
+          </View>
+        </Pressable>
+        <View style={styles.cardHeaderActions}>
+          <Pressable onPress={onOpenExercise}>
+            <Text style={styles.infoLabel}>Info</Text>
+          </Pressable>
+          <Text style={styles.expandLabel}>
+            {draftExercise.isExpanded ? 'Hide' : 'Edit'}
           </Text>
         </View>
-        <Text style={styles.expandLabel}>
-          {draftExercise.isExpanded ? 'Hide' : 'Edit'}
-        </Text>
-      </Pressable>
+      </View>
 
       {draftExercise.isExpanded ? (
         <View style={styles.setList}>
@@ -805,6 +818,17 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     justifyContent: 'space-between',
     padding: spacing.md,
+  },
+  exerciseHeaderToggle: {
+    flex: 1,
+  },
+  cardHeaderActions: {
+    alignItems: 'flex-end',
+    gap: spacing.xs,
+  },
+  infoLabel: {
+    ...typography.caption,
+    color: colors.accent,
   },
   expandLabel: {
     ...typography.caption,

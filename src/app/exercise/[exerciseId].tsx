@@ -76,24 +76,34 @@ export default function ExerciseDetailScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.mediaFrame}>
           {gifSource ? (
-            <Image
-              resizeMode="contain"
-              source={gifSource}
-              style={styles.exerciseImage}
-            />
+            <>
+              <Image
+                resizeMode="contain"
+                source={gifSource}
+                style={styles.exerciseImage}
+              />
+              <View style={styles.mediaBadge}>
+                <Text style={styles.mediaBadgeText}>Local media</Text>
+              </View>
+            </>
           ) : (
             <View style={styles.mediaPlaceholder}>
-              <Text style={styles.placeholderTitle}>No local GIF</Text>
-              <Text style={styles.placeholderBody}>{exercise.asset_key}</Text>
+              <View style={styles.placeholderMark}>
+                <Text style={styles.placeholderMarkText}>GIF</Text>
+              </View>
+              <Text style={styles.placeholderTitle}>No local media</Text>
+              <Text style={styles.placeholderBody}>
+                Asset key: {exercise.asset_key}
+              </Text>
             </View>
           )}
         </View>
 
-        <View style={styles.detailCard}>
-          <View style={styles.titleRow}>
-            <View style={styles.titleColumn}>
-              <Text style={styles.exerciseName}>{exercise.name}</Text>
-              <Text style={styles.metaText}>{exercise.category}</Text>
+        <View style={styles.titleBlock}>
+          <Text style={styles.exerciseName}>{exercise.name}</Text>
+          <View style={styles.titlePillRow}>
+            <View style={styles.categoryPill}>
+              <Text style={styles.categoryPillText}>{exercise.category}</Text>
             </View>
             <View style={styles.trackPill}>
               <Text style={styles.trackPillText}>
@@ -101,7 +111,9 @@ export default function ExerciseDetailScreen() {
               </Text>
             </View>
           </View>
+        </View>
 
+        <View style={styles.metadataGrid}>
           <InfoRow label="Primary muscle" value={exercise.primary_muscle} />
           <InfoRow
             label="Secondary muscles"
@@ -111,10 +123,10 @@ export default function ExerciseDetailScreen() {
                 : 'None'
             }
           />
-          <InfoRow label="Asset key" value={exercise.asset_key} />
+          <InfoRow label="Asset" value={gifSource ? 'Local GIF ready' : 'Placeholder'} />
         </View>
 
-        <View style={styles.detailCard}>
+        <View style={styles.instructionsBlock}>
           <Text style={styles.sectionTitle}>Instructions</Text>
           <Text style={styles.instructionsText}>
             {exercise.instructions?.trim() || 'No instructions saved yet.'}
@@ -165,8 +177,21 @@ const styles = StyleSheet.create({
   },
   mediaPlaceholder: {
     alignItems: 'center',
-    gap: spacing.xs,
+    gap: spacing.sm,
     padding: spacing.lg,
+  },
+  placeholderMark: {
+    alignItems: 'center',
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    height: 48,
+    justifyContent: 'center',
+    width: 64,
+  },
+  placeholderMarkText: {
+    ...typography.caption,
+    color: colors.accent,
   },
   placeholderTitle: {
     ...typography.heading,
@@ -177,7 +202,22 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     textAlign: 'center',
   },
-  detailCard: {
+  mediaBadge: {
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    bottom: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    position: 'absolute',
+    right: spacing.sm,
+  },
+  mediaBadgeText: {
+    ...typography.caption,
+    color: colors.accent,
+  },
+  titleBlock: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
     borderRadius: 8,
@@ -185,23 +225,28 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     padding: spacing.md,
   },
-  titleRow: {
+  titlePillRow: {
     alignItems: 'flex-start',
     flexDirection: 'row',
-    gap: spacing.md,
-    justifyContent: 'space-between',
-  },
-  titleColumn: {
-    flex: 1,
-    gap: spacing.xs,
+    flexWrap: 'wrap',
+    gap: spacing.sm,
   },
   exerciseName: {
     ...typography.title,
     color: colors.text,
   },
-  metaText: {
+  categoryPill: {
+    alignSelf: 'flex-start',
+    backgroundColor: colors.background,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  categoryPillText: {
     ...typography.caption,
-    color: colors.textMuted,
+    color: colors.text,
   },
   trackPill: {
     alignSelf: 'flex-start',
@@ -217,6 +262,14 @@ const styles = StyleSheet.create({
     color: colors.text,
     textAlign: 'center',
   },
+  metadataGrid: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: spacing.md,
+    padding: spacing.md,
+  },
   infoRow: {
     borderTopColor: colors.border,
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -230,6 +283,14 @@ const styles = StyleSheet.create({
   infoValue: {
     ...typography.body,
     color: colors.text,
+  },
+  instructionsBlock: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: spacing.sm,
+    padding: spacing.md,
   },
   sectionTitle: {
     ...typography.heading,

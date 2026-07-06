@@ -2,14 +2,16 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  FlatList,
+  type ListRenderItem,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
 
+import { getExerciseGif } from '@/assets/assets_index';
 import { EmptyState } from '@/components/EmptyState';
 import { Screen } from '@/components/Screen';
 import { colors } from '@/design-system/colors';
@@ -73,52 +75,85 @@ export default function ExerciseLibraryScreen() {
     [],
   );
 
+  const renderExercise = useCallback<ListRenderItem<Exercise>>(
+    ({ item: exercise }) => (
+      <ExerciseRow
+        exercise={exercise}
+        onPress={() => {
+          router.push(`/exercise/${exercise.id}`);
+        }}
+      />
+    ),
+    [router],
+  );
+
   return (
     <Screen title="Exercises">
-      <TextInput
-        onChangeText={updateSearch}
-        placeholder="Search by exercise, muscle, or category"
-        placeholderTextColor={colors.textMuted}
-        style={styles.searchInput}
-        value={searchText}
-      />
+      <View style={styles.searchShell}>
+        <TextInput
+          onChangeText={updateSearch}
+          placeholder="Search exercise, muscle, or category"
+          placeholderTextColor={colors.textMuted}
+          style={styles.searchInput}
+          value={searchText}
+        />
+      </View>
 
       {isLoading ? (
-        <View style={styles.centered}>
+        <View style={styles.loadingPanel}>
           <ActivityIndicator color={colors.accent} />
+          <Text style={styles.loadingText}>Loading library</Text>
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.list}>
-          {filteredExercises.length === 0 ? (
+        <FlatList
+          contentContainerStyle={styles.list}
+          data={filteredExercises}
+          keyExtractor={(exercise) => exercise.id}
+          keyboardShouldPersistTaps="handled"
+          ListEmptyComponent={
             <EmptyState
-              body="Try a different exercise name, muscle, or category."
+              body="Search another exercise, muscle, or category."
               title="No exercises found"
             />
-          ) : (
-            filteredExercises.map((exercise) => (
-              <Pressable
-                key={exercise.id}
-                onPress={() => {
-                  router.push(`/exercise/${exercise.id}`);
-                }}
-                style={({ pressed }) => [
-                  styles.exerciseRow,
-                  pressed ? styles.pressedRow : null,
-                ]}
-              >
-                <View style={styles.exerciseTextColumn}>
-                  <Text style={styles.exerciseName}>{exercise.name}</Text>
-                  <Text style={styles.exerciseMeta}>
-                    {exercise.primary_muscle} / {exercise.category}
-                  </Text>
-                </View>
-                <TrackTypePill trackType={exercise.track_type} />
-              </Pressable>
-            ))
-          )}
-        </ScrollView>
+          }
+          renderItem={renderExercise}
+        />
       )}
     </Screen>
+  );
+}
+
+type ExerciseRowProps = {
+  exercise: Exercise;
+  onPress: () => void;
+};
+
+function ExerciseRow({ exercise, onPress }: ExerciseRowProps) {
+  const hasMedia = Boolean(getExerciseGif(exercise.asset_key));
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.exerciseRow,
+        pressed ? styles.pressedRow : null,
+      ]}
+    >
+      <View style={styles.exerciseTextColumn}>
+        <Text style={styles.exerciseName}>{exercise.name}</Text>
+        <Text style={styles.exerciseMeta}>
+          {exercise.primary_muscle} / {exercise.category}
+        </Text>
+      </View>
+      <View style={styles.badgeColumn}>
+        <TrackTypePill trackType={exercise.track_type} />
+        {hasMedia ? (
+          <View style={styles.mediaPill}>
+            <Text style={styles.mediaPillText}>Media</Text>
+          </View>
+        ) : null}
+      </View>
+    </Pressable>
   );
 }
 
@@ -135,20 +170,28 @@ function TrackTypePill({ trackType }: TrackTypePillProps) {
 }
 
 const styles = StyleSheet.create({
-  searchInput: {
-    ...typography.body,
+  searchShell: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
     borderRadius: 8,
     borderWidth: StyleSheet.hairlineWidth,
-    color: colors.text,
-    minHeight: 44,
     paddingHorizontal: spacing.md,
   },
-  centered: {
+  searchInput: {
+    ...typography.body,
+    backgroundColor: 'transparent',
+    color: colors.text,
+    minHeight: 48,
+  },
+  loadingPanel: {
     alignItems: 'center',
     flex: 1,
+    gap: spacing.sm,
     justifyContent: 'center',
+  },
+  loadingText: {
+    ...typography.caption,
+    color: colors.textMuted,
   },
   list: {
     gap: spacing.sm,
@@ -163,7 +206,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.md,
     justifyContent: 'space-between',
-    minHeight: 72,
+    minHeight: 80,
     padding: spacing.md,
   },
   pressedRow: {
@@ -181,6 +224,10 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textMuted,
   },
+  badgeColumn: {
+    alignItems: 'flex-end',
+    gap: spacing.xs,
+  },
   trackPill: {
     alignSelf: 'flex-start',
     backgroundColor: colors.surfaceMuted,
@@ -193,5 +240,17 @@ const styles = StyleSheet.create({
   trackPillText: {
     ...typography.caption,
     color: colors.text,
+  },
+  mediaPill: {
+    alignSelf: 'flex-end',
+    borderColor: colors.accent,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  mediaPillText: {
+    ...typography.caption,
+    color: colors.accent,
   },
 });
