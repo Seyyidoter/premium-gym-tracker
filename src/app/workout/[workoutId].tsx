@@ -19,6 +19,8 @@ import { colors } from '@/design-system/colors';
 import { spacing } from '@/design-system/spacing';
 import { typography } from '@/design-system/typography';
 import type {
+  PreviousSetMetrics,
+  PreviousSetMetricsByWorkoutExercise,
   WorkoutDetails,
   WorkoutExerciseDetails,
   WorkoutSetDetails,
@@ -26,7 +28,9 @@ import type {
 } from '@/db/repositories/workoutRepository';
 import {
   addWorkoutSet,
+  applyPreviousMetricsToWorkoutExercise,
   deleteWorkoutSet,
+  getPreviousSetMetricsForWorkout,
   getWorkoutDetails,
   toggleSetCompleted,
   updateSetMetrics,
@@ -45,6 +49,8 @@ type MetricDraft = {
 export default function WorkoutScreen() {
   const { workoutId } = useLocalSearchParams<{ workoutId: string }>();
   const [details, setDetails] = useState<WorkoutDetails | null>(null);
+  const [previousMetricsByExercise, setPreviousMetricsByExercise] =
+    useState<PreviousSetMetricsByWorkoutExercise>({});
   const [metricDrafts, setMetricDrafts] = useState<Record<string, MetricDraft>>(
     {},
   );
@@ -62,7 +68,11 @@ export default function WorkoutScreen() {
     }
     try {
       const workoutDetails = await getWorkoutDetails(workoutId);
+      const previousMetrics = workoutDetails
+        ? await getPreviousSetMetricsForWorkout(workoutId)
+        : {};
       setDetails(workoutDetails);
+      setPreviousMetricsByExercise(previousMetrics);
       setMetricDrafts(buildMetricDrafts(workoutDetails));
     } finally {
       if (showLoading) {
@@ -171,6 +181,39 @@ export default function WorkoutScreen() {
     [loadWorkout, runQueuedMutation],
   );
 
+  const usePreviousValues = useCallback(
+    async (workoutExerciseId: string) => {
+      try {
+        const result = await runQueuedMutation(async () => {
+          setMutating(true);
+          try {
+            const applyResult =
+              await applyPreviousMetricsToWorkoutExercise(workoutExerciseId);
+            await loadWorkout(false);
+            return applyResult;
+          } finally {
+            setMutating(false);
+          }
+        });
+
+        if (result.applied_sets === 0) {
+          Alert.alert(
+            'Previous values not applied',
+            result.available_previous_sets === 0
+              ? 'No previous values were found for this exercise.'
+              : 'Only completed sets had previous values.',
+          );
+        }
+      } catch (error: unknown) {
+        Alert.alert(
+          'Previous values not applied',
+          error instanceof Error ? error.message : 'Try again.',
+        );
+      }
+    },
+    [loadWorkout, runQueuedMutation],
+  );
+
   const confirmDeleteSet = useCallback(
     (set: WorkoutSetDetails) => {
       Alert.alert('Delete set', 'Delete this unfinished set?', [
@@ -254,6 +297,12 @@ export default function WorkoutScreen() {
               onDeleteSet={confirmDeleteSet}
               onToggleSet={toggleCompleted}
               onUpdateDraft={updateDraft}
+              onUsePreviousValues={() => {
+                void usePreviousValues(workoutExercise.id);
+              }}
+              previousMetricsBySetNumber={
+                previousMetricsByExercise[workoutExercise.id] ?? {}
+              }
               workoutExercise={workoutExercise}
             />
           ))
@@ -279,6 +328,8 @@ type ExerciseCardProps = {
     field: keyof MetricDraft,
     value: string,
   ) => void;
+  onUsePreviousValues: () => void;
+  previousMetricsBySetNumber: Record<number, PreviousSetMetrics>;
   workoutExercise: WorkoutExerciseDetails;
 };
 
@@ -290,8 +341,14 @@ function ExerciseCard({
   onDeleteSet,
   onToggleSet,
   onUpdateDraft,
+  onUsePreviousValues,
+  previousMetricsBySetNumber,
   workoutExercise,
 }: ExerciseCardProps) {
+  const canUsePreviousValues = workoutExercise.sets.some(
+    (set) => !set.is_completed && previousMetricsBySetNumber[set.set_number],
+  );
+
   return (
     <View style={styles.exerciseCard}>
       <View style={styles.exerciseHeader}>
@@ -299,7 +356,22 @@ function ExerciseCard({
           <Text style={styles.exerciseName}>{workoutExercise.exercise.name}</Text>
           <Text style={styles.metaText}>{workoutExercise.exercise.track_type}</Text>
         </View>
-        <Text style={styles.metaText}>{workoutExercise.sets.length} sets</Text>
+        <View style={styles.exerciseHeaderActions}>
+          <Text style={styles.metaText}>{workoutExercise.sets.length} sets</Text>
+          <Pressable
+            accessibilityRole="button"
+            disabled={isMutating || !canUsePreviousValues}
+            onPress={onUsePreviousValues}
+            style={[
+              styles.usePreviousButton,
+              isMutating || !canUsePreviousValues
+                ? styles.usePreviousButtonDisabled
+                : null,
+            ]}
+          >
+            <Text style={styles.usePreviousText}>Use previous values</Text>
+          </Pressable>
+        </View>
       </View>
 
       <View style={styles.setList}>
@@ -320,6 +392,7 @@ function ExerciseCard({
             onUpdateDraft={(field, value) =>
               onUpdateDraft(set.id, field, value)
             }
+            previousMetrics={previousMetricsBySetNumber[set.set_number]}
             set={set}
             trackType={workoutExercise.exercise.track_type}
           />
@@ -340,6 +413,7 @@ type SetRowProps = {
   onDelete: () => void;
   onToggle: () => Promise<void>;
   onUpdateDraft: (field: keyof MetricDraft, value: string) => void;
+  previousMetrics?: PreviousSetMetrics;
   set: WorkoutSetDetails;
   trackType: TrackType;
 };
@@ -351,13 +425,19 @@ function SetRow({
   onDelete,
   onToggle,
   onUpdateDraft,
+  previousMetrics,
   set,
   trackType,
 }: SetRowProps) {
   return (
     <View style={[styles.setRow, set.is_completed ? styles.completedSet : null]}>
       <View style={styles.setTopRow}>
-        <Text style={styles.setTitle}>Set {set.set_number}</Text>
+        <View style={styles.setTitleColumn}>
+          <Text style={styles.setTitle}>Set {set.set_number}</Text>
+          <Text style={styles.previousText}>
+            {formatPreviousMetrics(previousMetrics, trackType)}
+          </Text>
+        </View>
         <View style={styles.setActions}>
           <Pressable
             disabled={isMutating}
@@ -604,6 +684,31 @@ function formatOptionalNumber(value: number | null): string {
   return value === null ? '' : String(value);
 }
 
+function formatPreviousMetrics(
+  previousMetrics: PreviousSetMetrics | undefined,
+  trackType: TrackType,
+): string {
+  if (!previousMetrics) {
+    return 'Previous: No previous';
+  }
+
+  const { metrics } = previousMetrics;
+
+  if (trackType === 'weight_reps') {
+    return `Previous: ${formatPreviousValue(metrics.weight)} x ${formatPreviousValue(metrics.reps)}`;
+  }
+
+  if (trackType === 'distance_duration_incline') {
+    return `Previous: ${formatPreviousValue(metrics.distance_km, ' km')} / ${formatPreviousValue(metrics.incline, ' incline')} / ${formatPreviousValue(metrics.duration_seconds, 's')}`;
+  }
+
+  return `Previous: ${formatPreviousValue(metrics.duration_seconds, 's')}`;
+}
+
+function formatPreviousValue(value: number | null, suffix = ''): string {
+  return value === null ? '-' : `${value}${suffix}`;
+}
+
 const styles = StyleSheet.create({
   centered: {
     alignItems: 'center',
@@ -651,9 +756,28 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     justifyContent: 'space-between',
   },
+  exerciseHeaderActions: {
+    alignItems: 'flex-end',
+    gap: spacing.sm,
+  },
   exerciseName: {
     ...typography.heading,
     color: colors.text,
+  },
+  usePreviousButton: {
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  usePreviousButtonDisabled: {
+    opacity: 0.45,
+  },
+  usePreviousText: {
+    ...typography.caption,
+    color: colors.accent,
+    textAlign: 'center',
   },
   setList: {
     gap: spacing.sm,
@@ -670,14 +794,22 @@ const styles = StyleSheet.create({
     borderColor: colors.accent,
   },
   setTopRow: {
-    alignItems: 'center',
+    alignItems: 'flex-start',
     flexDirection: 'row',
     gap: spacing.md,
     justifyContent: 'space-between',
   },
+  setTitleColumn: {
+    flex: 1,
+    gap: spacing.xs,
+  },
   setTitle: {
     ...typography.body,
     color: colors.text,
+  },
+  previousText: {
+    ...typography.caption,
+    color: colors.textMuted,
   },
   setActions: {
     alignItems: 'center',

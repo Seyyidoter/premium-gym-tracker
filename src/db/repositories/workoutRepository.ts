@@ -94,6 +94,22 @@ type MaxSetNumberRow = {
   max_set_number: number | null;
 };
 
+type PreviousWorkoutReferenceRow = {
+  workout_id: string;
+  scheduled_date: string;
+  created_at: string;
+};
+
+type PreviousSetMetricRow = SetMetrics & {
+  set_number: number;
+};
+
+type WorkoutExerciseContextRow = {
+  id: string;
+  workout_id: string;
+  exercise_id: string;
+};
+
 export type WorkoutSetMetricsPayload = {
   weight?: number | null;
   reps?: number | null;
@@ -113,6 +129,27 @@ export type WorkoutExerciseDetails = WorkoutExercise & {
 
 export type WorkoutDetails = Workout & {
   exercises: WorkoutExerciseDetails[];
+};
+
+export type PreviousSetMetrics = {
+  set_number: number;
+  previous_workout_id: string;
+  previous_scheduled_date: string;
+  previous_created_at: string;
+  metrics: SetMetrics;
+};
+
+export type PreviousSetMetricsBySetNumber = Record<number, PreviousSetMetrics>;
+
+export type PreviousSetMetricsByWorkoutExercise = Record<
+  string,
+  PreviousSetMetricsBySetNumber
+>;
+
+export type ApplyPreviousMetricsResult = {
+  applied_sets: number;
+  skipped_completed_sets: number;
+  available_previous_sets: number;
 };
 
 export async function createWorkout(
@@ -570,6 +607,237 @@ INSERT INTO set_metrics (
   return setDetails;
 }
 
+export async function getPreviousSetMetricsForWorkout(
+  workoutId: string,
+): Promise<PreviousSetMetricsByWorkoutExercise> {
+  const workout = await getWorkoutById(workoutId);
+
+  if (!workout) {
+    return {};
+  }
+
+  const database = await getReadyDatabase();
+  const workoutExercises = await database.getAllAsync<WorkoutExercise>(
+    `
+SELECT *
+FROM workout_exercises
+WHERE workout_id = ? AND deleted_at IS NULL
+ORDER BY order_index ASC;
+`,
+    workoutId,
+  );
+
+  const previousByWorkoutExercise: PreviousSetMetricsByWorkoutExercise = {};
+
+  for (const workoutExercise of workoutExercises) {
+    const previousMetrics = await getPreviousSetMetricsForExercise(
+      workoutExercise.exercise_id,
+      workout.id,
+    );
+    previousByWorkoutExercise[workoutExercise.id] =
+      mapPreviousMetricsBySetNumber(previousMetrics);
+  }
+
+  return previousByWorkoutExercise;
+}
+
+export async function getPreviousSetMetricsForExercise(
+  exerciseId: string,
+  beforeWorkoutId: string,
+): Promise<PreviousSetMetrics[]> {
+  const currentWorkout = await getWorkoutById(beforeWorkoutId);
+
+  if (!currentWorkout) {
+    throw new Error('Workout was not found.');
+  }
+
+  const database = await getReadyDatabase();
+  const previousWorkout =
+    await database.getFirstAsync<PreviousWorkoutReferenceRow>(
+      `
+SELECT DISTINCT
+  w.id AS workout_id,
+  w.scheduled_date,
+  w.created_at
+FROM workouts w
+INNER JOIN workout_exercises we
+  ON we.workout_id = w.id
+  AND we.deleted_at IS NULL
+INNER JOIN sets s
+  ON s.workout_exercise_id = we.id
+  AND s.deleted_at IS NULL
+INNER JOIN set_metrics sm
+  ON sm.set_id = s.id
+  AND sm.deleted_at IS NULL
+WHERE we.exercise_id = ?
+  AND w.id != ?
+  AND w.deleted_at IS NULL
+  AND w.status IN ('completed', 'in_progress')
+  AND (
+    w.scheduled_date < ?
+    OR (
+      w.scheduled_date = ?
+      AND w.created_at < ?
+    )
+  )
+  AND (
+    sm.weight IS NOT NULL
+    OR sm.reps IS NOT NULL
+    OR sm.distance_km IS NOT NULL
+    OR sm.incline IS NOT NULL
+    OR sm.duration_seconds IS NOT NULL
+  )
+ORDER BY w.scheduled_date DESC, w.created_at DESC
+LIMIT 1;
+`,
+      exerciseId,
+      beforeWorkoutId,
+      currentWorkout.scheduled_date,
+      currentWorkout.scheduled_date,
+      currentWorkout.created_at,
+    );
+
+  if (!previousWorkout) {
+    return [];
+  }
+
+  const rows = await database.getAllAsync<PreviousSetMetricRow>(
+    `
+SELECT
+  s.set_number,
+  sm.*
+FROM workout_exercises we
+INNER JOIN sets s
+  ON s.workout_exercise_id = we.id
+  AND s.deleted_at IS NULL
+INNER JOIN set_metrics sm
+  ON sm.set_id = s.id
+  AND sm.deleted_at IS NULL
+WHERE we.workout_id = ?
+  AND we.exercise_id = ?
+  AND we.deleted_at IS NULL
+  AND (
+    sm.weight IS NOT NULL
+    OR sm.reps IS NOT NULL
+    OR sm.distance_km IS NOT NULL
+    OR sm.incline IS NOT NULL
+    OR sm.duration_seconds IS NOT NULL
+  )
+ORDER BY we.order_index ASC, s.set_number ASC;
+`,
+    previousWorkout.workout_id,
+    exerciseId,
+  );
+
+  const previousMetrics: PreviousSetMetrics[] = [];
+  const usedSetNumbers = new Set<number>();
+
+  for (const row of rows) {
+    if (usedSetNumbers.has(row.set_number)) {
+      continue;
+    }
+
+    usedSetNumbers.add(row.set_number);
+    previousMetrics.push(mapPreviousSetMetricRow(row, previousWorkout));
+  }
+
+  return previousMetrics;
+}
+
+export async function applyPreviousMetricsToWorkoutExercise(
+  workoutExerciseId: string,
+): Promise<ApplyPreviousMetricsResult> {
+  const database = await getReadyDatabase();
+  const workoutExercise = await database.getFirstAsync<WorkoutExerciseContextRow>(
+    `
+SELECT id, workout_id, exercise_id
+FROM workout_exercises
+WHERE id = ? AND deleted_at IS NULL
+LIMIT 1;
+`,
+    workoutExerciseId,
+  );
+
+  if (!workoutExercise) {
+    throw new Error('Workout exercise was not found.');
+  }
+
+  const previousMetrics = await getPreviousSetMetricsForExercise(
+    workoutExercise.exercise_id,
+    workoutExercise.workout_id,
+  );
+  const previousBySetNumber = mapPreviousMetricsBySetNumber(previousMetrics);
+  const currentSets = await database.getAllAsync<WorkoutSetRow>(
+    `
+SELECT *
+FROM sets
+WHERE workout_exercise_id = ? AND deleted_at IS NULL
+ORDER BY set_number ASC, created_at ASC;
+`,
+    workoutExerciseId,
+  );
+  const timestamp = nowIso();
+  let appliedSets = 0;
+  let skippedCompletedSets = 0;
+
+  await database.withTransactionAsync(async () => {
+    for (const set of currentSets) {
+      const previous = previousBySetNumber[set.set_number];
+
+      if (!previous) {
+        continue;
+      }
+
+      if (set.is_completed === 1) {
+        skippedCompletedSets += 1;
+        continue;
+      }
+
+      await database.runAsync(
+        `
+INSERT INTO set_metrics (
+  set_id,
+  weight,
+  reps,
+  distance_km,
+  incline,
+  duration_seconds,
+  rpe,
+  notes,
+  created_at,
+  updated_at,
+  deleted_at
+) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL)
+ON CONFLICT(set_id) DO UPDATE SET
+  weight = excluded.weight,
+  reps = excluded.reps,
+  distance_km = excluded.distance_km,
+  incline = excluded.incline,
+  duration_seconds = excluded.duration_seconds,
+  updated_at = excluded.updated_at,
+  deleted_at = NULL;
+`,
+        set.id,
+        previous.metrics.weight,
+        previous.metrics.reps,
+        previous.metrics.distance_km,
+        previous.metrics.incline,
+        previous.metrics.duration_seconds,
+        timestamp,
+        timestamp,
+      );
+
+      appliedSets += 1;
+    }
+  });
+
+  return {
+    applied_sets: appliedSets,
+    skipped_completed_sets: skippedCompletedSets,
+    available_previous_sets: previousMetrics.length,
+  };
+}
+
 export async function deleteWorkoutSet(setId: string): Promise<WorkoutStatus> {
   const database = await getReadyDatabase();
   const setContext = await getSetWorkoutContext(setId);
@@ -937,6 +1205,43 @@ function getStatusFromCompletionSummary(
   }
 
   return 'in_progress';
+}
+
+function mapPreviousMetricsBySetNumber(
+  previousMetrics: PreviousSetMetrics[],
+): PreviousSetMetricsBySetNumber {
+  const previousBySetNumber: PreviousSetMetricsBySetNumber = {};
+
+  for (const previous of previousMetrics) {
+    previousBySetNumber[previous.set_number] = previous;
+  }
+
+  return previousBySetNumber;
+}
+
+function mapPreviousSetMetricRow(
+  row: PreviousSetMetricRow,
+  previousWorkout: PreviousWorkoutReferenceRow,
+): PreviousSetMetrics {
+  return {
+    set_number: row.set_number,
+    previous_workout_id: previousWorkout.workout_id,
+    previous_scheduled_date: previousWorkout.scheduled_date,
+    previous_created_at: previousWorkout.created_at,
+    metrics: {
+      set_id: row.set_id,
+      weight: row.weight,
+      reps: row.reps,
+      distance_km: row.distance_km,
+      incline: row.incline,
+      duration_seconds: row.duration_seconds,
+      rpe: row.rpe,
+      notes: row.notes,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      deleted_at: row.deleted_at,
+    },
+  };
 }
 
 function mapWorkoutSetDetailRow(row: WorkoutSetDetailRow): WorkoutSetDetails {
